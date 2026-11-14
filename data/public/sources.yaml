@@ -1,0 +1,81 @@
+# Public sources for the documents agent (Phase 5). Only this list is
+# committed: fetched text is cached in data/.cache/public/ (gitignored) and
+# stored in the database, never in the repo (data/SOURCES.md). Fetch and load
+# with `python -m bank.public fetch|load` (SEC requests declare
+# SEC_USER_AGENT and stay under 10 a second).
+#
+# kind: sec_10k (Items 1A and 7 only) | sec_prospectus (the fund's summary
+# prospectus, Form 497K) | cfpb | investor_gov (the page's main text).
+# Every document is public (clearance 0) and opens with its attribution.
+sources:
+  - id: aapl-10k-2026
+    kind: sec_10k
+    title: Apple Inc. Form 10-K, fiscal year ended September 26, 2026
+    ticker: AAPL
+    cik: 320193
+    accession: 0000320193-26-000026
+    document: aapl-20260926.htm
+    filed: 2026-11-03
+    version: FY2026
+  - id: msft-10k-2026
+    kind: sec_10k
+    title: Microsoft Corporation Form 10-K, fiscal year ended June 30, 2026
+    ticker: MSFT
+    cik: 789019
+    accession: 0001193125-26-323660
+    document: msft-20260630.htm
+    filed: 2026-07-29
+    version: FY2026
+  - id: ko-10k-2025
+    kind: sec_10k
+    title: The Coca-Cola Company Form 10-K, fiscal year ended December 31, 2025
+    ticker: KO
+    cik: 21344
+    accession: 0001628280-26-010047
+    document: ko-20251231.htm
+    filed: 2026-02-20
+    version: FY2025
+  - id: vti-summary-prospectus-2026
+    kind: sec_prospectus
+    title: Vanguard Total Stock Market ETF (VTI) summary prospectus, April 2026
+    ticker: VTI
+    cik: 36405
+    accession: 0000036405-26-000197
+    document: f44849d1.htm
+    filed: 2026-04-28
+    version: "2026-04"
+  - id: bnd-summary-prospectus-2026
+    kind: sec_prospectus
+    title: Vanguard Total Bond Market ETF (BND) summary prospectus, April 2026
+    ticker: BND
+    cik: 794105
+    accession: 0000794105-26-000124
+    document: f44834d1.htm
+    filed: 2026-04-28
+    version: "2026-04"
+  - id: schd-summary-prospectus-2026
+    kind: sec_prospectus
+    title: Schwab U.S. Dividend Equity ETF (SCHD) summary prospectus, 2026
+    ticker: SCHD
+    cik: 1454889
+    accession: 0001104659-26-020681
+    document: tm266454-15_497k.htm
+    filed: 2026-02-27
+    version: "2026"
+  - id: cfpb-what-is-an-overdraft
+    kind: cfpb
+    title: "CFPB: What is an overdraft?"
+    url: https://www.consumerfinance.gov/ask-cfpb/what-is-an-overdraft-en-1035/
+  - id: cfpb-dispute-credit-card-charge
+    kind: cfpb
+    title: "CFPB: How do I dispute a charge on my credit card bill?"
+    url: https://www.consumerfinance.gov/ask-cfpb/how-do-i-dispute-a-charge-on-my-credit-card-bill-en-61/
+  - id: cfpb-unauthorized-transaction
+    kind: cfpb
+    title: "CFPB: How do I get my money back after I discover an unauthorized transaction?"
+    url: https://www.consumerfinance.gov/ask-cfpb/how-do-i-get-my-money-back-after-i-discover-an-unauthorized-transaction-or-money-missing-from-my-bank-account-en-1017/
+# Investor.gov (investor_gov) is left out: its CDN (Akamai) answers 403 to
+# any non-browser client, the declared SEC_USER_AGENT included (checked
+# 2026-11-14), and FinPilot doesn't impersonate a browser. Candidates, if it
+# opens up: the ETFs page, the Mutual Fund and ETF Fees and Expenses bulletin,
+# Asset Allocation and Diversification.

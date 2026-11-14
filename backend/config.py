@@ -67,6 +67,11 @@ class Settings(BaseSettings):
     # The backend refuses to start if this is set in its environment.
     migration_database_url: str | None = None
 
+    # --- Public sources (bank/public.py) ---
+    # EDGAR requires a User-Agent naming a contact: "FinPilot research project
+    # <name> <email>". In .env only, never committed.
+    sec_user_agent: str | None = None
+
     # --- Auth (auth.py) ---
     # Firebase project whose ID tokens are accepted. The service account key
     # (GOOGLE_APPLICATION_CREDENTIALS) is read by the Firebase SDK itself.

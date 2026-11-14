@@ -5,7 +5,7 @@ The plan, the architecture checklist and the commit budget are in
 enterprise build, its eval baselines and decisions) is in git history: see
 `docs/PROGRESS.md` at commit 51ba57a.
 
-**Commits: 14 of 24** (budget raised from 22 on 2026-11-14: Phase 4 got two more commits; spare 3, the last spare, went on the full-text fix) (budget decided 2026-11-13; the Compose-name chore is outside it).
+**Commits: 15 of 24** (budget raised from 22 on 2026-11-14: Phase 4 got two more commits; spare 3, the last spare, went on the full-text fix; Phase 5 commit 1 is the public sources, so its accounts and market tools have one commit left) (budget decided 2026-11-13; the Compose-name chore is outside it).
 
 ## Chores outside the phase budget
 
@@ -422,6 +422,64 @@ reads the root file by absolute path. No env file holds `DATABASE_URL` or
 process, so a local run or test can't reach Neon by accident. Checked on
 Neon: the store refuses the owner URL (`BYPASSRLS`) and accepts
 finpilot_app's.
+
+## Phase 5: public sources
+
+| # | Commit | What |
+|---|---|---|
+| 1 | this commit | Public sources (SEC 10-K Items 1A and 7, ETF summary prospectuses, CFPB answers): fetched with `SEC_USER_AGENT`, cached outside git, chunked and loaded like the bank's documents; paced embedding in both loaders |
+
+### Notes
+
+- **What's in it** (`data/public/sources.yaml`, the only part committed;
+  `data/SOURCES.md` lists every filing and URL): Items 1A and 7 of the
+  10-Ks of Apple (FY2026), Microsoft (FY2026) and Coca-Cola (FY2025); the
+  summary prospectuses of VTI, BND and SCHD (three of the four demo ETFs);
+  three CFPB answers (overdrafts, credit card disputes, unauthorized debit
+  transactions).
+- **Investor.gov is not in it.** Its CDN (Akamai) answers 403 to any
+  non-browser client, the declared SEC User-Agent included, for pages and
+  PDFs. FinPilot doesn't impersonate a browser, so it's recorded as blocked.
+- **Corpus size for your review.** 9 public documents, **326 chunks, about
+  105,000 tokens** (108 under 256 tokens; median 351, maximum 511). With the
+  bank's 13 documents and 114 chunks, the knowledge base is **22 documents,
+  440 chunks**, about 4x the bank corpus alone; the 10-Ks are 262 of the
+  public chunks (Coca-Cola 121, Microsoft 86, Apple 55), the prospectuses
+  54, the CFPB answers 10.
+- **Extraction.** HTML to Markdown with lxml: headings (h tags, or short
+  all-bold lines), paragraphs, tables as rows (`$` cells dropped, `%` and
+  `)` joined to their number). For a 10-K, each item runs from its heading to
+  the next item's, taking the longest such span so the table of contents
+  doesn't win; running page headers ("Item 1A" on every Microsoft page),
+  page numbers and "Table of Contents" are dropped. CFPB pages stop before
+  their "Browse related questions" link lists. Every document opens with
+  its attribution line. Public documents are clearance 0 in the bank's org,
+  with doc_type (`sec_10k`, `fund_prospectus`, `consumer_guide`),
+  department `public`, version and the filing date as effective date, for
+  the filters.
+- **Fetching.** SEC: `SEC_USER_AGENT` from `.env` (never printed or
+  committed), 4 requests a second (limit 10). CFPB: one a second, plain
+  project User-Agent. Raw HTML is cached in `data/.cache/public/`
+  (gitignored), so loads don't refetch.
+- **Load status: partial.** Main Neon was migrated to 0012 (the hybrid
+  default needs the question index) and the bank corpus reloaded with
+  question vectors. Chunk metadata for all 326 public chunks is done
+  (59 calls, cached; Gemini Flash-Lite answered many first attempts with
+  503 "high demand", and one run gave up). Embedding then hit the **daily**
+  free-tier cap of `gemini-embedding-2` (1,000 texts a day per project:
+  today's reloads, question vectors and experiment queries used most of
+  it). Stored so far: the Apple and Microsoft 10-Ks (141 chunks, every one
+  with its question vector). **To finish after the reset (midnight Pacific):**
+  `scripts/neon.py run -- python -m bank.public load`; metadata comes from
+  the cache (0 calls), the stored documents keep their vectors, and the
+  other 7 documents need about 370 embeddings. The leakage check on main
+  stays clean with the public documents in.
+- **Paced embedding.** A loader now gives the store a paced embedder (90
+  texts and 27,000 tokens a minute, under the free tier's 100 and 30,000),
+  so a large document no longer runs into the per-minute limit; it existed
+  for the old loader but wasn't wired into the store path.
+- **Not done:** VXUS's prospectus; no Postgres test of the public loader
+  (the fetched HTML isn't in CI), only unit tests on inline HTML.
 
 ## Phase 10 notes (from 2026-11-14)
 

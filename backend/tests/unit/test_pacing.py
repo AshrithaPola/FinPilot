@@ -132,3 +132,11 @@ def test_a_daily_quota_stops_without_retrying(monkeypatch):
     with pytest.raises(pacing.QuotaStop):
         pacing.embed_with_retries(_paced(inner, clock, 90, 10_000), ["a"], sleep=clock.sleep)
     assert inner.calls == [] and clock.slept == []
+
+
+async def test_the_paced_embedder_is_also_a_paced_provider():
+    clock = FakeClock()
+    inner = CountingEmbedder()
+    paced = _paced(inner, clock, texts_per_minute=10, tokens_per_minute=10_000)
+    assert len(await paced.embed_documents([f"t{i}" for i in range(25)])) == 25
+    assert inner.calls == [10, 10, 5] and clock.slept == [60, 60]

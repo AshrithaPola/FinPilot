@@ -76,11 +76,16 @@ def _load_command(no_metadata: bool) -> None:
     from bank.synthetic import BANK_ORG
     from config import get_settings
     from db.access import Access
-    from deps import get_llm, get_store
+    from deps import get_embeddings, get_llm
+    from ingestion.pacing import PacedEmbedder
+    from ingestion.store import HybridStore
     from ingestion.metadata import load_cache, save_cache
 
     settings = get_settings()
-    store = get_store().scoped(Access(org_id=BANK_ORG, clearance=2, role="admin"))
+    # Paced embeddings: a whole document's chunks and questions are embedded
+    # at once, which can exceed the free tier's per-minute limits.
+    store = HybridStore(settings, PacedEmbedder(get_embeddings())).scoped(
+        Access(org_id=BANK_ORG, clearance=2, role="admin"))
     cache = load_cache()
     try:
         counts = asyncio.run(load(store, load_corpus(settings), llm=None if no_metadata else get_llm(),

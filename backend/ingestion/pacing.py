@@ -86,14 +86,23 @@ class PacedEmbedder:
         if part:
             yield part, part_tokens
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    async def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        """Also an embeddings provider: the loaders give it to the store, so a
+        large document is paced, not retried after a 429. acquire() sleeps
+        the thread, which only a command-line loader should do."""
         vectors: list[list[float]] = []
         for part, part_tokens in self._slices(texts):
             self._limiter.acquire(len(part))
             self._token_limiter.acquire(part_tokens)
             self.tokens_paced += part_tokens
-            vectors += asyncio.run(self._embeddings.embed_documents(part))
+            vectors += await self._embeddings.embed_documents(part)
         return vectors
+
+    async def embed_query(self, text: str) -> list[float]:
+        return await self._embeddings.embed_query(text)
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        return asyncio.run(self.embed_documents(texts))
 
 
 def embed_with_retries(embedder: PacedEmbedder, texts: list[str],
