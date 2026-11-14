@@ -218,8 +218,8 @@ _WHERE = """
 _COLUMNS = "chunk_id, doc_id, chunk_index, section, text, filename, page_number"
 
 
-def _nearest(column: str) -> sa.TextClause:
-    return sa.text(f"""
+def _nearest(column: str) -> str:
+    return f"""
         WITH candidates AS MATERIALIZED (
             SELECT {_COLUMNS}, {column} <=> CAST(:query_vector AS vector) AS distance
             FROM chunks
@@ -229,11 +229,11 @@ def _nearest(column: str) -> sa.TextClause:
         )
         SELECT * FROM candidates
         ORDER BY distance + 0
-    """)
+    """
 
 
-_DENSE = _nearest("embedding")
-_QUESTIONS = _nearest("question_embedding")
+_DENSE = sa.text(_nearest("embedding"))
+_QUESTIONS = sa.text(_nearest("question_embedding"))
 
 def _as_query(lexeme: str) -> str:
     """SQL turning a lexeme column into a one-term tsquery: a quoted tsquery
@@ -249,7 +249,7 @@ def _as_query(lexeme: str) -> str:
 # many adjacent query-term pairs they hold as phrases, then by ts_rank_cd.
 # Terms are the query's own lexemes ('english': stemmed, stop words out);
 # pairs are consecutive ones, stop words skipped.
-_SPARSE = sa.text(f"""
+_SPARSE_SQL = f"""
     WITH terms AS (
         SELECT t.lexeme, p.pos
         FROM unnest(to_tsvector('english', :query)) AS t, unnest(t.positions) AS p(pos)
@@ -268,6 +268,22 @@ _SPARSE = sa.text(f"""
     WHERE tsv @@ q.any_term AND {_WHERE}
     ORDER BY matched DESC, adjacent DESC, score DESC, chunk_id
     LIMIT :n
+"""
+_SPARSE = sa.text(_SPARSE_SQL)
+
+# Hybrid mode: the three legs in one statement, one round trip (each was
+# its own before; from far away, every round trip cost about 100 ms). Each
+# branch numbers its own rows, so the legs stay separate rankings for RRF.
+_HYBRID = sa.text(f"""
+    SELECT 'dense' AS leg, row_number() OVER (ORDER BY distance) AS rank, {_COLUMNS}, distance
+    FROM ({_nearest("embedding")}) AS dense
+    UNION ALL
+    SELECT 'questions', row_number() OVER (ORDER BY distance), {_COLUMNS}, distance
+    FROM ({_nearest("question_embedding")}) AS questions
+    UNION ALL
+    SELECT 'sparse', row_number() OVER (ORDER BY matched DESC, adjacent DESC, score DESC, chunk_id),
+           {_COLUMNS}, NULL::float8
+    FROM ({_SPARSE_SQL}) AS sparse
 """)
 
 
@@ -294,6 +310,12 @@ class HybridStore:
         self._check_embedding_index()
         self._check_role_cannot_bypass_rls()
 
+    @property
+    def engine(self) -> sa.Engine:
+        """The app's connection pool (finpilot_app, checked at startup), shared
+        with the accounts tools."""
+        return self._engine
+
     def scoped(self, access) -> "HybridStore":
         """A copy of this store (same engine) whose transactions run as `access`."""
         scoped = copy.copy(self)
@@ -316,10 +338,12 @@ class HybridStore:
             raise PermissionError("Only editors and admins can write documents.")
 
     @contextmanager
-    def _begin(self):
+    def _begin(self, settings: dict[str, str] | None = None):
+        """A transaction bound to the caller's access, plus any further
+        transaction-local `settings`, all in one statement."""
         with self._engine.begin() as conn:
             if self._access is not None:
-                set_access(conn, self._access)
+                set_access(conn, self._access, settings)
             yield conn
 
     def _check_role_cannot_bypass_rls(self) -> None:
@@ -555,14 +579,18 @@ class HybridStore:
         hybrid = self._settings.retrieval_mode == "hybrid"
         # Every leg runs under the RLS policy: the access check is a filter on
         # each row's own columns, which iterative scans handle like doc_id.
-        with self._begin() as conn:
-            conn.execute(sa.text("SET LOCAL hnsw.iterative_scan = relaxed_order"))
-            dense_rows = conn.execute(_DENSE, vector).mappings().all()
-            sparse_rows = conn.execute(_SPARSE, {**params, "query": query}).mappings().all() if hybrid else []
-            question_rows = conn.execute(_QUESTIONS, vector).mappings().all() if hybrid else []
-
-        dense = {r["chunk_id"]: (rank, 1.0 - r["distance"], r["text"], _meta(r))
-                 for rank, r in enumerate(dense_rows, start=1)}
-        sparse = {r["chunk_id"]: (rank, r["text"], _meta(r)) for rank, r in enumerate(sparse_rows, start=1)}
-        questions = {r["chunk_id"]: (rank, r["text"], _meta(r)) for rank, r in enumerate(question_rows, start=1)}
-        return rrf_fuse(dense, sparse, self._settings.rrf_k, questions)
+        # Two statements: the access context (with the scan setting), then
+        # the legs; the context must be set before the policies read it.
+        with self._begin({"hnsw.iterative_scan": "relaxed_order"}) as conn:
+            if hybrid:
+                rows = conn.execute(_HYBRID, {**vector, "query": query}).mappings().all()
+            else:
+                rows = [{**r, "leg": "dense", "rank": rank}
+                        for rank, r in enumerate(conn.execute(_DENSE, vector).mappings().all(), start=1)]
+        legs: dict[str, dict] = {"dense": {}, "sparse": {}, "questions": {}}
+        for r in rows:
+            if r["leg"] == "dense":
+                legs["dense"][r["chunk_id"]] = (r["rank"], 1.0 - r["distance"], r["text"], _meta(r))
+            else:
+                legs[r["leg"]][r["chunk_id"]] = (r["rank"], r["text"], _meta(r))
+        return rrf_fuse(legs["dense"], legs["sparse"], self._settings.rrf_k, legs["questions"])

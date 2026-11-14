@@ -33,15 +33,23 @@ _SET_ACCESS = sa.text("""
 """)
 
 
-def set_access(conn, access) -> None:
+def set_access(conn, access, extra: dict[str, str] | None = None) -> None:
     """Bind this transaction (a Connection or Session) to `access`: anything
     with org_id, clearance and team_ids (and optionally customer_id; none
-    or None sets '', which no policy matches). Postgres only: the SQLite log
+    or None sets '', which no policy matches). `extra` sets further
+    transaction-local settings in the same statement, saving a round trip
+    (retrieval sets hnsw.iterative_scan). Postgres only: the SQLite log
     stand-in has no RLS."""
     # A Session has get_bind(); a Connection has the dialect itself.
     dialect = conn.get_bind().dialect if hasattr(conn, "get_bind") else conn.dialect
     if dialect.name != "postgresql":
         return
-    conn.execute(_SET_ACCESS, {"org_id": access.org_id, "clearance": access.clearance,
-                               "team_ids": list(access.team_ids),
-                               "customer_id": getattr(access, "customer_id", None) or ""})
+    params = {"org_id": access.org_id, "clearance": access.clearance, "team_ids": list(access.team_ids),
+              "customer_id": getattr(access, "customer_id", None) or ""}
+    statement = _SET_ACCESS
+    if extra:
+        statement = sa.text(_SET_ACCESS.text.rstrip() + "".join(
+            f", set_config(:extra_name{i}, :extra_value{i}, true)" for i in range(len(extra))))
+        for i, (name, value) in enumerate(extra.items()):
+            params |= {f"extra_name{i}": name, f"extra_value{i}": value}
+    conn.execute(statement, params)

@@ -99,3 +99,15 @@ async def test_full_text_ranks_the_overdraft_cushion_row_first(pg_url, app_url):
     ranking = await store.scoped(CUSTOMER).fused_ranking(query, await store.embed_query(query))
     first = min((c for c in ranking if c.sparse_rank), key=lambda c: c.sparse_rank)
     assert first.filename == "fee-schedule-2026.md" and "overdraft cushion" in first.text.lower()
+
+
+async def test_a_hybrid_search_is_two_statements(pg_url, app_url):
+    """One for the access context (and the scan setting), one for all three
+    legs: from far away every round trip costs about 100 ms."""
+    store = _store(pg_url, app_url)
+    await _load(store)
+    sent = []
+    sa.event.listen(store._engine, "before_cursor_execute",
+                    lambda conn, cursor, statement, *args: sent.append(statement))
+    hits = await store.scoped(ADMIN).search(ABROAD)
+    assert hits and len(sent) == 2

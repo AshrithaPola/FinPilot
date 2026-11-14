@@ -5,7 +5,7 @@ The plan, the architecture checklist and the commit budget are in
 enterprise build, its eval baselines and decisions) is in git history: see
 `docs/PROGRESS.md` at commit 51ba57a.
 
-**Commits: 15 of 24** (budget raised from 22 on 2026-11-14: Phase 4 got two more commits; spare 3, the last spare, went on the full-text fix; Phase 5 commit 1 is the public sources, so its accounts and market tools have one commit left) (budget decided 2026-11-13; the Compose-name chore is outside it).
+**Commits: 16 of 25** (budget raised to 24 on 2026-11-14 for Phase 4's two extra commits, then to 25 the same day so the accounts tools and the market tools each get their own commit; no spare) (budget decided 2026-11-13; the Compose-name chore is outside it).
 
 ## Chores outside the phase budget
 
@@ -427,7 +427,8 @@ finpilot_app's.
 
 | # | Commit | What |
 |---|---|---|
-| 1 | this commit | Public sources (SEC 10-K Items 1A and 7, ETF summary prospectuses, CFPB answers): fetched with `SEC_USER_AGENT`, cached outside git, chunked and loaded like the bank's documents; paced embedding in both loaders |
+| 1 | `9046cf3` | Public sources (SEC 10-K Items 1A and 7, ETF summary prospectuses, CFPB answers): fetched with `SEC_USER_AGENT`, cached outside git, chunked and loaded like the bank's documents; paced embedding in both loaders |
+| 2 | this commit | Accounts tools (read-only, parameterized, under the customer's RLS context) with adversarial tests; search legs in one SQL statement |
 
 ### Notes
 
@@ -481,8 +482,64 @@ finpilot_app's.
 - **Not done:** VXUS's prospectus; no Postgres test of the public loader
   (the fetched HTML isn't in CI), only unit tests on inline HTML.
 
+### Notes (commit 2)
+
+- **Accounts tools** (`backend/tools/accounts.py`): `list_accounts`,
+  `list_cards`, `list_transactions`, `list_fees`, `list_holdings`, the
+  financial-data agent's view of customer data (Phase 6 calls them by
+  name). Four layers, each enough alone to stop a cross-customer read: no
+  tool takes a customer id (the customer is the authenticated caller;
+  staff and anonymous callers are refused before any SQL); strict argument
+  models (an unknown argument such as `customer_id` is refused, ids must
+  look like the bank's, dates are dates, limits at most 200, ranges
+  ordered); parameterized SQL only; and a `READ ONLY` transaction bound to
+  the caller, as finpilot_app, which has SELECT only and is under forced
+  RLS. Another customer's id returns nothing, exactly like an id that
+  doesn't exist, so nothing is revealed. No balances: the data has no
+  opening balances, so a balance would be invented; sums are the
+  calculator's (next commit).
+- **Adversarial tests.** Unit (before any SQL): staff and anonymous
+  callers, unknown or write-like tool names, a smuggled `customer_id`,
+  quote and comment injection in ids, categories and fee types, oversized
+  limits, reversed ranges. Postgres (CI): a customer sees only their own
+  rows in every tool; another customer's real account id (checked to exist)
+  returns nothing; one tool object serving two callers never mixes them;
+  hostile text that passes validation is only data, and table counts are
+  unchanged; a write fails in the tools' transaction ("read-only
+  transaction") and, without it, for lack of a grant ("permission denied").
+  Checked read-only on Neon too: every tool returns only the caller's rows;
+  another customer's account gives nothing.
+- **Search legs in one statement** (your suggestion). The three legs run as
+  one `UNION ALL` query, and the scan setting rides with the access
+  context, so a search is 2 statements instead of 5 (hybrid) or 3 (dense).
+  The access context stays a statement of its own: RLS reads it, and inside
+  one statement Postgres doesn't promise it's set before the policies run.
+  The pool's pre-ping stays too (Neon drops idle connections). Same 12
+  queries, same fused ranking, old and new. A Postgres test pins a hybrid
+  search to 2 statements. Measured from this laptop on the branch
+  (`python -m eval.latency_breakdown`):
+
+| Mode | Before: statements | Before: end to end | After: statements | After: end to end |
+|---|---|---|---|---|
+| dense | 3 | 443 ms | 2 | 388 ms |
+| hybrid | 5 | 652 ms | 2 | 422 ms |
+| hybrid + rerank | 5 | 1,638 ms | 2 | 1,453 ms |
+
+  Four round trips remain per search (pre-ping, access context, legs,
+  COMMIT); next to the database each is about a millisecond.
+- **Still open from your decisions.** The public load waits for the
+  embedding quota (resets at midnight Pacific); then
+  `scripts/neon.py run -- python -m bank.public load` and the leakage
+  check on main. Investor.gov: `data/public/manual/` doesn't exist yet;
+  it's gitignored now, and loading from it will be added once the pages
+  are saved there (with a SOURCES.md note that they were saved by hand
+  from a browser).
+
 ## Phase 10 notes (from 2026-11-14)
 
+- **Reranker and tables.** The cross-encoder demoted table-row chunks
+  (the APY table and the "Overdraft cushion" row fell to rank 4 in the
+  branch experiment): test skipping the rerank for table chunks.
 - **Harder receipts.** Add 5 receipt images that are blurred, rotated and
   low-contrast, so the vision accuracy claim (10/10 per field) isn't
   measured on clean renders only.

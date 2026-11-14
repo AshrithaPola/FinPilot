@@ -33,6 +33,14 @@ def get_store() -> HybridStore:
 
 
 @lru_cache
+def get_accounts_tools():
+    """The accounts tools, on the store's connection (finpilot_app, under RLS)."""
+    from tools.accounts import AccountsTools
+
+    return AccountsTools(get_store().engine)
+
+
+@lru_cache
 def get_token_checker():
     from auth import FirebaseTokenChecker  # auth imports this module
 
