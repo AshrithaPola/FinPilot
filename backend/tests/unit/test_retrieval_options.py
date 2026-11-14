@@ -73,3 +73,9 @@ def test_rerank_reorders_the_fused_candidates_then_cuts_to_top_k():
     assert [h.chunk_id for h in hits] == ["d-3", "d-2"]  # d-4 was outside rerank_candidates
     assert hits[0].rerank_score == len("the longest text")
     assert hits[0].context_chunk_ids == ["d-3"]
+
+
+def test_the_defaults_are_the_branching_experiments_choice(monkeypatch):
+    monkeypatch.delenv("RETRIEVAL_MODE")  # the suite runs hybrid (tests/conftest.py)
+    s = Settings(_env_file=None)
+    assert (s.retrieval_mode, s.rerank, s.parent_expansion) == ("dense", False, False)

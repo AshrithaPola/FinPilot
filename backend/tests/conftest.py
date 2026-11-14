@@ -33,6 +33,14 @@ TEST_UID = "uid-test"
 APP_ROLE_PASSWORD = "finpilot-app-test"
 
 
+@pytest.fixture(autouse=True)
+def _all_retrieval_legs(monkeypatch):
+    """Tests run hybrid retrieval, so the full-text and question legs stay
+    covered; production defaults to dense (the Phase 4 experiment). Dense is
+    tested explicitly (tests/integration/test_retrieval_options.py)."""
+    monkeypatch.setenv("RETRIEVAL_MODE", "hybrid")
+
+
 @pytest.fixture
 def fake_llm():
     return FakeLLM()

@@ -5,7 +5,7 @@ The plan, the architecture checklist and the commit budget are in
 enterprise build, its eval baselines and decisions) is in git history: see
 `docs/PROGRESS.md` at commit 51ba57a.
 
-**Commits: 12 of 24** (budget raised from 22 on 2026-11-14: Phase 4 gets two more commits; one spare left after Phase 12's) (budget decided 2026-11-13; the Compose-name chore is outside it).
+**Commits: 13 of 24** (budget raised from 22 on 2026-11-14: Phase 4 gets two more commits; one spare left after Phase 12's) (budget decided 2026-11-13; the Compose-name chore is outside it).
 
 ## Chores outside the phase budget
 
@@ -227,7 +227,8 @@ PR #5 (Phases 0–2) was merged on 2026-11-14 with a merge commit
 | # | Commit | What |
 |---|---|---|
 | 1 | `c6b8571` | Chunks never cross a section or hold two tables; replaced documents keep unchanged chunks' vectors; Neon setup (`scripts/neon.py`, psycopg URL schemes in config); batched synthetic inserts; read-only leakage check (`scripts/leakage_check.py`) |
-| 2 | this commit | Metadata filters (department, document type, the version in force on a date, today by default); hypothetical-question index (migration 0012) as a third RRF leg; cross-encoder rerank toggle (fastembed, ONNX); parent-section expansion within a token cap; default scope is every visible document |
+| 2 | `e538303` | Metadata filters (department, document type, the version in force on a date, today by default); hypothetical-question index (migration 0012) as a third RRF leg; cross-encoder rerank toggle (fastembed, ONNX); parent-section expansion within a token cap; default scope is every visible document |
+| 3 | this commit | Neon branching experiment: 19 reviewed questions, six configurations; defaults dense, no rerank, no parent expansion; one env file (repo-root `.env`), `scripts/neon.py --branch` |
 
 ### Notes
 
@@ -305,6 +306,95 @@ PR #5 (Phases 0–2) was merged on 2026-11-14 with a merge commit
   is dropped, not repeated; page-chunked uploads (no section) stay as they
   are. `context_chunk_ids` lists the chunks a hit's text holds, which the
   experiment uses for recall.
+
+### Retrieval defaults: design decision (commit 3, 2026-11-14)
+
+**Decision: `RETRIEVAL_MODE=dense`, `RERANK=false`, `PARENT_EXPANSION=false`.**
+Hybrid, rerank and expansion stay available as settings. This is a Phase 4
+design decision on 19 questions, not the Phase 10 evaluation; the README
+carries no numbers.
+
+How it was measured. On the Neon branch `chunking-experiment` (a copy of
+main: 13 documents, 114 chunks), migrated to 0012 and reloaded (0 metadata
+calls, cache; 114 question vectors). 19 questions written from the documents
+and reviewed (`backend/eval/branch_questions.yaml`): 15 paraphrases, 3
+exact-term questions ("overdraft cushion", `POST /cards/{card_id}/lock`,
+"Zero Liability") and 1 version trap (overdraft fees a day: 2 in 2026, 3 in
+2025; a 2025-only hit counts as a miss). Each has gold sections and
+verbatim answer snippets, checked against the corpus by a unit test. Asked
+as a customer with the default filter, top_k 6, each question embedded once;
+latency is search only, median of 3 rounds, from this machine to Neon.
+`python -m eval.branch_experiment run` (through `scripts/neon.py --branch`).
+
+| Configuration | Recall@1 | Recall@3 | Recall@6 | MRR | Answer in context | Context tokens | p50 ms | p95 ms | Missed | No answer |
+|---|---|---|---|---|---|---|---|---|---|---|
+| dense | 0.89 | 1.00 | 1.00 | 0.93 | 1.00 | 1325 | 436 | 671 | - | - |
+| dense + parents | 0.89 | 1.00 | 1.00 | 0.93 | 1.00 | 1463 | 917 | 1022 | - | - |
+| hybrid | 0.79 | 0.89 | 1.00 | 0.85 | 1.00 | 1322 | 698 | 814 | - | - |
+| hybrid + parents | 0.79 | 0.89 | 1.00 | 0.85 | 1.00 | 1411 | 1142 | 1304 | - | - |
+| hybrid + rerank | 0.89 | 0.89 | 1.00 | 0.92 | 1.00 | 1471 | 1948 | 2223 | - | - |
+| hybrid + rerank + parents | 0.89 | 0.89 | 1.00 | 0.92 | 1.00 | 1612 | 2558 | 3074 | - | - |
+
+Rank of the first result holding a gold section:
+
+| Q | dense | dense + parents | hybrid | hybrid + parents | hybrid + rerank | hybrid + rerank + parents |
+|---|---|---|---|---|---|---|
+| Q1 | 1 | 1 | 1 | 1 | 1 | 1 |
+| Q2 | 1 | 1 | 1 | 1 | 1 | 1 |
+| Q3 | 1 | 1 | 5 | 5 | 1 | 1 |
+| Q4 | 1 | 1 | 1 | 1 | 1 | 1 |
+| Q5 | 1 | 1 | 1 | 1 | 1 | 1 |
+| Q6 | 1 | 1 | 1 | 1 | 1 | 1 |
+| Q7 | 1 | 1 | 1 | 1 | 1 | 1 |
+| Q8 | 1 | 1 | 1 | 1 | 1 | 1 |
+| Q9 | 1 | 1 | 1 | 1 | 1 | 1 |
+| Q10 | 1 | 1 | 1 | 1 | 1 | 1 |
+| Q11 | 1 | 1 | 1 | 1 | 1 | 1 |
+| Q12 | 3 | 3 | 2 | 2 | 4 | 4 |
+| Q13 | 1 | 1 | 1 | 1 | 1 | 1 |
+| Q14 | 1 | 1 | 3 | 3 | 1 | 1 |
+| Q15 | 1 | 1 | 1 | 1 | 1 | 1 |
+| Q16 | 1 | 1 | 5 | 5 | 4 | 4 |
+| Q17 | 1 | 1 | 1 | 1 | 1 | 1 |
+| Q18 | 3 | 3 | 1 | 1 | 1 | 1 |
+| Q19 | 1 | 1 | 1 | 1 | 1 | 1 |
+
+Why:
+
+- **Recall@6 and answer-in-context are 1.00 everywhere.** On 114 chunks the
+  top 6 is 5% of the corpus, so these can't separate the modes; ranking and
+  cost decide.
+- **Dense ranks best** (MRR 0.93, gold first on 17 of 19) and is fastest.
+  Hybrid ranks worse (0.85): it wins the "Zero Liability" exact-term
+  question (rank 3 to 1) and the APY table (3 to 2), but loses Q3 (1 to 5),
+  Q14 (1 to 3) and, surprisingly, the exact-term "overdraft cushion" (1 to
+  5). The full-text query ORs its terms, so "overdraft" matches every
+  overdraft-policy section, and with three equal legs the dense ranking is
+  outvoted. Worth fixing (phrase-first full-text, or leg weights) before
+  hybrid is reconsidered.
+- **Rerank repairs most of hybrid's damage** (MRR 0.92) but costs about 3x
+  the latency (p50 about 1.9 s versus 0.4 s) for no gain over dense.
+- **Parent expansion changed no rank** (it doesn't by design) and the
+  answer was already in context without it; it added about 90 to 140 tokens
+  and 450 to 600 ms (a second round trip to Neon). Its value would show on
+  answers spread across a section, which these questions don't need.
+- **Revisit in Phase 10**, with more questions and harder ones (answers that
+  span sections, more exact identifiers), and after the full-text fix.
+
+Testing: CI runs the suite in hybrid mode (`tests/conftest.py`), so all
+three legs stay tested; dense has its own test, and a unit test pins these
+defaults. Rerank didn't become the default, so CI doesn't download its model.
+
+**One env file** (same commit). The Neon strings moved from `backend/.env`
+to the repo-root `.env` (`NEON_MIGRATION_DATABASE_URL` and
+`NEON_POOLED_DATABASE_URL`, owner; `NEON_APP_DATABASE_URL`, finpilot_app;
+`NEON_BRANCH_DATABASE_URL`, the branch's owner); `backend/.env` held only
+those and two identical API keys, so it was removed. The backend's config
+reads the root file by absolute path. No env file holds `DATABASE_URL` or
+`MIGRATION_DATABASE_URL`: Compose and `scripts/neon.py` set them per
+process, so a local run or test can't reach Neon by accident. Checked on
+Neon: the store refuses the owner URL (`BYPASSRLS`) and accepts
+finpilot_app's.
 
 ## Phase 10 notes (from 2026-11-14)
 

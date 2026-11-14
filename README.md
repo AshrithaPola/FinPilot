@@ -6,7 +6,7 @@ A banking assistant for the customers of a fictional bank. It answers from the c
 
 ## What exists today
 
-- **Retrieval.** Every chunk is stored once in Postgres with a pgvector embedding (`gemini-embedding-2` by default, or local `all-MiniLM-L6-v2`) and a full-text index. A query runs the chunk vectors, full-text search and a hypothetical-question index (one vector per chunk for the questions it answers) and fuses them with reciprocal rank fusion; a local cross-encoder can rerank the result (`RERANK`), and each hit can be widened to its parent section (`PARENT_EXPANSION`). Metadata filters (department, document type, an as-of date) run in SQL; by default only the version of each document in force today is searched, across every document the caller may see.
+- **Retrieval.** Every chunk is stored once in Postgres with a pgvector embedding (`gemini-embedding-2` by default, or local `all-MiniLM-L6-v2`) and a full-text index. By default a query searches the chunk vectors (`RETRIEVAL_MODE=dense`); `RETRIEVAL_MODE=hybrid` adds full-text search and a hypothetical-question index (one vector per chunk for the questions it answers), fused with reciprocal rank fusion. A local cross-encoder can rerank the result (`RERANK`), and each hit can be widened to its parent section (`PARENT_EXPANSION`); both are off by default. The defaults came from a comparison on a Neon branch (recorded in `docs/PROGRESS.md`). Metadata filters (department, document type, an as-of date) run in SQL; by default only the version of each document in force today is searched, across every document the caller may see.
 - **Pipeline.** Input validation and PII masking, a small-talk shortcut, retrieval, a relevance grade, generation with inline citations, and a groundedness check with one retry; anything that fails becomes an explicit refusal. Answers stream only after they pass the check.
 - **Access.** Firebase identifies the user; Postgres decides what they may see (below). The bank's documents carry a clearance: 0 for customer-facing, 2 for staff-only.
 - **Documents** come only from a loader (the bank corpus loader arrives in Phase 3); there is no upload. Embedding is paced under the Gemini free tier's limits (`backend/ingestion/pacing.py`).
@@ -48,7 +48,7 @@ Every endpoint except `/me` and `/health` requires a Firebase ID token (`Authori
 ### Running without Docker
 
 ```bash
-# backend - put GEMINI_API_KEY in backend/.env or the environment
+# backend - put GEMINI_API_KEY in the repo-root .env or the environment
 cd backend
 python -m venv .venv
 .venv/Scripts/activate          # source .venv/bin/activate on macOS/Linux
@@ -67,7 +67,7 @@ Outside Docker the backend still needs Postgres with pgvector, because the chunk
 
 ### Running on Neon
 
-FinPilot's hosted database is Neon (serverless Postgres with pgvector). Put the two URLs from the Neon console in `backend/.env` (gitignored), never in the repo: `NEON_MIGRATION_DATABASE_URL` (the direct URL of the owner role) and `NEON_POOLED_DATABASE_URL` (the pooled host). Neon's `postgresql://` and `postgresql+psycopg://` schemes are accepted; the backend rewrites them for its psycopg2 driver (`config.sqlalchemy_url`). Then, from the repo root:
+FinPilot's hosted database is Neon (serverless Postgres with pgvector). Put the two URLs from the Neon console in the repo-root `.env` (gitignored; the one env file, which the backend's config and docker-compose both read), never in the repo: `NEON_MIGRATION_DATABASE_URL` (the direct URL of the owner role) and `NEON_POOLED_DATABASE_URL` (the pooled host). Neon's `postgresql://` and `postgresql+psycopg://` schemes are accepted; the backend rewrites them for its psycopg2 driver (`config.sqlalchemy_url`). Then, from the repo root:
 
 ```bash
 P=backend/.venv/Scripts/python                              # backend/.venv/bin/python on macOS/Linux
@@ -78,7 +78,7 @@ $P scripts/neon.py run -- python -m bank.receipts extract   # receipt fields: 10
 $P scripts/neon.py run -- python ../scripts/leakage_check.py
 ```
 
-`setup` writes `NEON_APP_DATABASE_URL` to `backend/.env` on its first run: `finpilot_app` on the pooled host, with a random password. Then it runs the migrate step as the owner, which creates `finpilot_app` (not a superuser, no `BYPASSRLS`, owns no table) and sets that password. `run` gives a command the owner URL as `MIGRATION_DATABASE_URL` and the app URL as `DATABASE_URL`. No script prints a URL.
+`setup` writes `NEON_APP_DATABASE_URL` to `.env` on its first run: `finpilot_app` on the pooled host, with a random password. Then it runs the migrate step as the owner, which creates `finpilot_app` (not a superuser, no `BYPASSRLS`, owns no table) and sets that password. `run` gives a command the owner URL as `MIGRATION_DATABASE_URL` and the app URL as `DATABASE_URL`. No script prints a URL. `.env` never holds `DATABASE_URL` or `MIGRATION_DATABASE_URL` themselves, so nothing that reads it, a local test run included, can reach Neon by accident; and the backend refuses to start on an owner connection (superuser, `BYPASSRLS` or table owner).
 
 Reloading is incremental. Chunk metadata is cached by chunk text, and a replaced document keeps the stored vectors of chunks whose text didn't change, so only changed chunks cost Gemini calls.
 

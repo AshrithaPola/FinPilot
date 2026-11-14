@@ -5,14 +5,21 @@ nothing is hardcoded. Defaults are chosen for local development; docker-compose
 overrides the service hosts.
 """
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+# The one env file: the repo root's .env (also docker-compose's). It never
+# holds DATABASE_URL or MIGRATION_DATABASE_URL: Compose and scripts/neon.py
+# set those per process, so a local run or test can't reach Neon by accident.
+ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
+
+
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=ENV_FILE, extra="ignore")
 
     # --- LLM (all reasoning calls go through the gateway in llm.py) ---
     llm_provider: Literal["gemini", "anthropic"] = "gemini"
@@ -75,8 +82,10 @@ class Settings(BaseSettings):
     rrf_candidates: int = 12  # candidates pulled from EACH retriever before fusion
     rrf_k: int = 60           # standard RRF damping constant
     # "dense": chunk vectors only. "hybrid": chunk vectors + full-text +
-    # the hypothetical-question index, fused with RRF.
-    retrieval_mode: Literal["dense", "hybrid"] = "hybrid"
+    # the hypothetical-question index, fused with RRF. Defaults (dense, no
+    # rerank, no parent expansion) come from the Phase 4 branching
+    # experiment: see docs/PROGRESS.md, "Retrieval defaults".
+    retrieval_mode: Literal["dense", "hybrid"] = "dense"
     # Rerank the fused candidates with a local cross-encoder (ONNX, no torch).
     rerank: bool = False
     rerank_model: str = "Xenova/ms-marco-MiniLM-L-6-v2"

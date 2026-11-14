@@ -93,7 +93,8 @@ def build_store(settings):
         conn.execute(sa.text("INSERT INTO orgs VALUES (:org, 'Benchmark') ON CONFLICT DO NOTHING"),
                      {"org": BENCH_ORG})
     owner.dispose()
-    store = HybridStore(settings, build_embeddings(settings))
+    # The bench reports each leg's ranks, so it always runs every leg.
+    store = HybridStore(settings, build_embeddings(settings)).configured(retrieval_mode="hybrid")
     return store.scoped(Access(org_id=BENCH_ORG, clearance=0, role="editor"))
 
 

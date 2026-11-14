@@ -1,0 +1,125 @@
+# Retrieval questions for the Phase 4 branching experiment (dense vs hybrid
+# vs hybrid+rerank, each with and without parent-section expansion), written
+# from the bank's documents and reviewed on 2026-11-14.
+#
+# gold:    (file, section path after the title); the question is found when
+#          any gold section is in the retrieved context. Section paths survive
+#          re-chunking; a prefix matches its subsections.
+# answers: verbatim snippets, any of which answers the question; matched
+#          ignoring case, whitespace and ** bold markers, against the final
+#          context text (answer-in-context rate).
+# kind:    paraphrase | exact (terms that appear verbatim, where full-text
+#          search should matter) | version (2025 and 2026 differ; only the
+#          2026 answer counts).
+# Asked as a customer (clearance 0), default filter (versions in force today).
+questions:
+  - q: How much is the overdraft fee now?
+    kind: paraphrase
+    gold:
+      - [overdraft-policy-2026.md, 3. Fees]
+      - [overdraft-policy-2026.md, Summary of changes]
+      - [fee-schedule-2026.md, "What changed on February 1, 2026"]
+      - [fee-schedule-2026.md, 1. Everyday Checking]
+    answers: ["$15.00 per item", "the overdraft fee is $15.00"]
+  - q: Do I still get charged if I'm only overdrawn by about $30?
+    kind: paraphrase
+    gold:
+      - [overdraft-policy-2026.md, Summary of changes]
+      - [overdraft-policy-2026.md, 3. Fees]
+      - [fee-schedule-2026.md, 1. Everyday Checking]
+    answers: ["$50.00 or less"]
+  - q: How long can my account stay negative before the bank closes it?
+    kind: paraphrase
+    gold:
+      - [overdraft-policy-2026.md, 5. Repaying an overdraft]
+    answers: ["45 days in a row"]
+  - q: What does it cost to send a domestic wire?
+    kind: paraphrase
+    gold:
+      - [fee-schedule-2026.md, 4. Payments and wires]
+    answers: ["outgoing domestic wire | $25.00"]
+  - q: How can I avoid the monthly maintenance fee on Everyday Checking?
+    kind: paraphrase
+    gold:
+      - [fee-schedule-2026.md, 1. Everyday Checking]
+      - [account-comparison.md, Checking]
+      - [account-comparison.md, Choosing an account]
+    answers: ["direct deposits to the account total $250.00 or more", "direct deposit of at least $250"]
+  - q: If someone steals my debit card, how much could I lose?
+    kind: paraphrase
+    gold:
+      - [dispute-policy.md, Part A. Deposit accounts and debit cards > A3. Deadlines for you]
+      - [deposit-agreement.md, 8. Electronic fund transfers]
+    answers: ["no more than $50"]
+  - q: How long do I have to dispute a charge on my credit card?
+    kind: paraphrase
+    gold:
+      - [dispute-policy.md, Part B. Cash Back Card (credit card) > B2. How and when to tell us]
+      - [cardmember-agreement.md, "8. Statements, disputes and unauthorized use"]
+    answers: ["within 60 days after we sent the first statement", "in writing within 60 days after we"]
+  - q: How is the interest on my savings worked out?
+    kind: paraphrase
+    gold:
+      - [deposit-agreement.md, 9. Interest]
+    answers: ["daily balance method"]
+  - q: What happens if I take money out of a 12-month CD early?
+    kind: paraphrase
+    gold:
+      - [deposit-agreement.md, 10. Certificates of deposit]
+      - [account-comparison.md, Certificates of deposit]
+    answers: ["12 months | 180 days of interest", "12 months | 3.90% | $500 | 180 days of interest"]
+  - q: When does an account count as dormant?
+    kind: paraphrase
+    gold:
+      - [deposit-agreement.md, 18. Dormant accounts and unclaimed property]
+    answers: ["no customer-initiated activity for 24 months"]
+  - q: Is there a grace period before interest is charged on card purchases?
+    kind: paraphrase
+    gold:
+      - [cardmember-agreement.md, 4. Interest charges]
+    answers: ["we don't charge interest on new purchases"]
+  - q: What APY does High-Yield Savings pay today?
+    kind: paraphrase
+    gold:
+      - [rates/deposit-rates.csv, effective 2026-02-01]
+      - [rates/rate-sheet.xlsx, Deposit rates]
+    answers: ["2026-02-01 | high-yield savings | | 0.00 | 9999.99 | 3.05 | 3.10", "high-yield savings | | 0.00 | 9999.99 | 3.05 | 3.10"]
+  - q: How much cash back does the card earn, and what doesn't earn it?
+    kind: paraphrase
+    gold:
+      - [cardmember-agreement.md, 7. Cash back rewards]
+    answers: ["fees and interest don't earn cash back"]
+  - q: Which API endpoint lists the fees charged on an account?
+    kind: paraphrase
+    gold:
+      - [api/openapi.yaml, "GET /accounts/{account_id}/fees"]
+    answers: ["get /accounts/{account_id}/fees operationid: listfees"]
+  - q: Can I deposit a check with my phone, and which checks qualify?
+    kind: paraphrase
+    gold:
+      - [deposit-agreement.md, 5. Mobile check deposit]
+    answers: ["checks payable to you and drawn on a u.s. bank"]
+  - q: What is the overdraft cushion?
+    kind: exact
+    gold:
+      - [fee-schedule-2026.md, 1. Everyday Checking]
+      - [overdraft-policy-2026.md, 3. Fees]
+      - [account-comparison.md, Checking]
+    answers: ["overdraft cushion | $50.00", "within the cushion", "over the $50.00 cushion"]
+  - q: What does POST /cards/{card_id}/lock do?
+    kind: exact
+    gold:
+      - [api/openapi.yaml, "POST /cards/{card_id}/lock"]
+    answers: ["summary: lock a card. purchases and withdrawals are declined"]
+  - q: What is the Zero Liability promise?
+    kind: exact
+    gold:
+      - [dispute-policy.md, Part A. Deposit accounts and debit cards > A3. Deadlines for you]
+    answers: ["we waive the limits above when you report them within 60 days"]
+  - q: How many overdraft fees can I be charged in one day?
+    kind: version
+    gold:
+      - [overdraft-policy-2026.md, 3. Fees]
+      - [overdraft-policy-2026.md, Summary of changes]
+      - [fee-schedule-2026.md, 1. Everyday Checking]
+    answers: ["most overdraft fees in one business day | 2", "at most 2 overdraft fees a business day", "overdraft fee limit | 2 per day"]
