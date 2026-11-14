@@ -59,9 +59,18 @@ jobs:
             -c backend/constraints.txt
           pip install -r backend/eval/requirements.txt -c backend/constraints.txt
 
+      # The reranker test loads the real cross-encoder (about 80 MB); keep it
+      # between runs instead of downloading it every time.
+      - name: Cache the reranker model
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/fastembed
+          key: fastembed-Xenova-ms-marco-MiniLM-L-6-v2-${{ hashFiles('backend/constraints.txt') }}
+
       - name: Run tests
         working-directory: backend
         env:
+          FASTEMBED_CACHE_PATH: ${{ runner.temp }}/fastembed
           TEST_POSTGRES_URL: postgresql+psycopg2://finpilot:finpilot@localhost:5432/finpilot
           # Postgres tests must run here, not skip.
           REQUIRE_POSTGRES_TESTS: "1"

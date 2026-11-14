@@ -82,12 +82,14 @@ class Settings(BaseSettings):
     rrf_candidates: int = 12  # candidates pulled from EACH retriever before fusion
     rrf_k: int = 60           # standard RRF damping constant
     # "dense": chunk vectors only. "hybrid": chunk vectors + full-text +
-    # the hypothetical-question index, fused with RRF. Defaults (dense, no
-    # rerank, no parent expansion) come from the Phase 4 branching
-    # experiment: see docs/PROGRESS.md, "Retrieval defaults".
-    retrieval_mode: Literal["dense", "hybrid"] = "dense"
+    # the hypothetical-question index, fused with RRF. Defaults: hybrid +
+    # rerank, as the architecture specifies, provisionally; the Phase 4
+    # branching experiment couldn't separate the modes on the 114-chunk bank
+    # corpus, so Phase 10 decides on the full corpus (docs/PROGRESS.md,
+    # "Retrieval defaults").
+    retrieval_mode: Literal["dense", "hybrid"] = "hybrid"
     # Rerank the fused candidates with a local cross-encoder (ONNX, no torch).
-    rerank: bool = False
+    rerank: bool = True
     rerank_model: str = "Xenova/ms-marco-MiniLM-L-6-v2"
     rerank_candidates: int = 20  # fused candidates the cross-encoder scores
     # Give the model each hit's parent section (title > heading), grown

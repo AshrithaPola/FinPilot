@@ -235,12 +235,38 @@ def _nearest(column: str) -> sa.TextClause:
 _DENSE = _nearest("embedding")
 _QUESTIONS = _nearest("question_embedding")
 
+def _as_query(lexeme: str) -> str:
+    """SQL turning a lexeme column into a one-term tsquery: a quoted tsquery
+    literal, so lexemes with punctuation (paths, "1a") parse."""
+    return f"CAST('''' || replace(replace({lexeme}, '\\', '\\\\'), '''', '''''') || '''' AS tsquery)"
+
+
+# Full-text leg. A chunk matches if it shares any query term (an AND of every
+# term rarely matches a natural question), but ranking by ts_rank_cd alone
+# rewarded repetition: "What is the overdraft cushion?" put every
+# overdraft-heavy section above the one row named "Overdraft cushion". So
+# chunks are ordered by how many distinct query terms they hold, then by how
+# many adjacent query-term pairs they hold as phrases, then by ts_rank_cd.
+# Terms are the query's own lexemes ('english': stemmed, stop words out);
+# pairs are consecutive ones, stop words skipped.
 _SPARSE = sa.text(f"""
-    SELECT {_COLUMNS}, ts_rank_cd(tsv, query) AS score
-    FROM chunks,
-         CAST(replace(plainto_tsquery('english', :query)::text, '&', '|') AS tsquery) AS query
-    WHERE tsv @@ query AND {_WHERE}
-    ORDER BY score DESC, chunk_id
+    WITH terms AS (
+        SELECT t.lexeme, p.pos
+        FROM unnest(to_tsvector('english', :query)) AS t, unnest(t.positions) AS p(pos)
+    ), ordered AS (
+        SELECT lexeme, row_number() OVER (ORDER BY pos) AS i FROM terms
+    ), q AS (
+        SELECT CAST(replace(plainto_tsquery('english', :query)::text, '&', '|') AS tsquery) AS any_term,
+               ARRAY(SELECT DISTINCT lexeme FROM terms) AS lexemes,
+               ARRAY(SELECT tsquery_phrase({_as_query("a.lexeme")}, {_as_query("b.lexeme")})
+                     FROM ordered a JOIN ordered b ON b.i = a.i + 1) AS pairs
+    )
+    SELECT {_COLUMNS}, ts_rank_cd(tsv, q.any_term) AS score,
+           cardinality(ARRAY(SELECT unnest(tsvector_to_array(tsv)) INTERSECT SELECT unnest(q.lexemes))) AS matched,
+           (SELECT count(*) FROM unnest(q.pairs) AS pair WHERE tsv @@ pair) AS adjacent
+    FROM chunks, q
+    WHERE tsv @@ q.any_term AND {_WHERE}
+    ORDER BY matched DESC, adjacent DESC, score DESC, chunk_id
     LIMIT :n
 """)
 

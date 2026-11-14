@@ -84,3 +84,18 @@ async def test_parent_expansion_gives_the_whole_top_level_section(pg_url, app_ur
                                       "Card Agreement > 2. Fees > 2.2 Foreign transactions"}
     assert "late payment costs $29" in fees.text and "3% foreign" in fees.text
     assert "Cash back" not in fees.text
+
+
+async def test_full_text_ranks_the_overdraft_cushion_row_first(pg_url, app_url):
+    """Distinct query terms, then adjacent pairs, then ts_rank_cd: the row named
+    "Overdraft cushion" beats sections that only repeat "overdraft"."""
+    from bank.corpus import load, load_corpus
+    from config import Settings
+    from tests.integration.test_corpus_load import CUSTOMER
+
+    store = _store(pg_url, app_url)
+    await load(store.scoped(ADMIN), load_corpus(Settings(_env_file=None, anthropic_api_key="x")))
+    query = "What is the overdraft cushion?"
+    ranking = await store.scoped(CUSTOMER).fused_ranking(query, await store.embed_query(query))
+    first = min((c for c in ranking if c.sparse_rank), key=lambda c: c.sparse_rank)
+    assert first.filename == "fee-schedule-2026.md" and "overdraft cushion" in first.text.lower()

@@ -5,7 +5,7 @@ The plan, the architecture checklist and the commit budget are in
 enterprise build, its eval baselines and decisions) is in git history: see
 `docs/PROGRESS.md` at commit 51ba57a.
 
-**Commits: 13 of 24** (budget raised from 22 on 2026-11-14: Phase 4 gets two more commits; one spare left after Phase 12's) (budget decided 2026-11-13; the Compose-name chore is outside it).
+**Commits: 14 of 24** (budget raised from 22 on 2026-11-14: Phase 4 got two more commits; spare 3, the last spare, went on the full-text fix) (budget decided 2026-11-13; the Compose-name chore is outside it).
 
 ## Chores outside the phase budget
 
@@ -228,7 +228,8 @@ PR #5 (Phases 0–2) was merged on 2026-11-14 with a merge commit
 |---|---|---|
 | 1 | `c6b8571` | Chunks never cross a section or hold two tables; replaced documents keep unchanged chunks' vectors; Neon setup (`scripts/neon.py`, psycopg URL schemes in config); batched synthetic inserts; read-only leakage check (`scripts/leakage_check.py`) |
 | 2 | `e538303` | Metadata filters (department, document type, the version in force on a date, today by default); hypothetical-question index (migration 0012) as a third RRF leg; cross-encoder rerank toggle (fastembed, ONNX); parent-section expansion within a token cap; default scope is every visible document |
-| 3 | this commit | Neon branching experiment: 19 reviewed questions, six configurations; defaults dense, no rerank, no parent expansion; one env file (repo-root `.env`), `scripts/neon.py --branch` |
+| 3 | `959b891` | Neon branching experiment: 19 reviewed questions, six configurations; defaults dense, no rerank, no parent expansion; one env file (repo-root `.env`), `scripts/neon.py --branch` |
+| spare 3 | this commit | Full-text leg ranks by distinct terms and adjacent pairs (the "overdraft cushion" bug); provisional defaults hybrid + rerank; latency breakdown; real-reranker CI test with the model cached; rerun recorded |
 
 ### Notes
 
@@ -307,24 +308,29 @@ PR #5 (Phases 0–2) was merged on 2026-11-14 with a merge commit
   are. `context_chunk_ids` lists the chunks a hit's text holds, which the
   experiment uses for recall.
 
-### Retrieval defaults: design decision (commit 3, 2026-11-14)
+### Retrieval defaults: provisional design decision (2026-11-14)
 
-**Decision: `RETRIEVAL_MODE=dense`, `RERANK=false`, `PARENT_EXPANSION=false`.**
-Hybrid, rerank and expansion stay available as settings. This is a Phase 4
-design decision on 19 questions, not the Phase 10 evaluation; the README
-carries no numbers.
+**Provisional default: hybrid + rerank (`RETRIEVAL_MODE=hybrid`,
+`RERANK=true`), parent expansion off**, as the architecture specifies. This
+is not a result: on a 114-chunk corpus the modes can't be told apart, so the
+final choice is made in **Phase 10, on the full corpus** (with the public
+sources, where tickers, "Item 1A" and regulation names should favour the
+full-text leg). Commit 3 had picked dense only; that was withdrawn (your
+review, 2026-11-14) because recall saturated, hybrid's losses came from a
+bug, and the latency was unexplained.
 
-How it was measured. On the Neon branch `chunking-experiment` (a copy of
-main: 13 documents, 114 chunks), migrated to 0012 and reloaded (0 metadata
-calls, cache; 114 question vectors). 19 questions written from the documents
-and reviewed (`backend/eval/branch_questions.yaml`): 15 paraphrases, 3
-exact-term questions ("overdraft cushion", `POST /cards/{card_id}/lock`,
-"Zero Liability") and 1 version trap (overdraft fees a day: 2 in 2026, 3 in
-2025; a 2025-only hit counts as a miss). Each has gold sections and
-verbatim answer snippets, checked against the corpus by a unit test. Asked
-as a customer with the default filter, top_k 6, each question embedded once;
-latency is search only, median of 3 rounds, from this machine to Neon.
-`python -m eval.branch_experiment run` (through `scripts/neon.py --branch`).
+**Setup** (both runs). Neon branch `chunking-experiment` (a copy of main:
+13 documents, 114 chunks), migration 0012, reloaded (0 metadata calls, 114
+question vectors). 19 reviewed questions (`backend/eval/branch_questions.yaml`):
+15 paraphrases, 3 exact-term ("overdraft cushion", `POST /cards/{card_id}/lock`,
+"Zero Liability"), 1 version trap (overdraft fees a day: 2 in 2026, 3 in
+2025; a 2025-only hit is a miss). Gold sections and verbatim answer
+snippets, checked against the corpus by a unit test. Asked as a customer,
+default filter, top_k 6; latency is search only, median of 3 rounds, from
+this laptop to Neon. `python -m eval.branch_experiment run` via
+`scripts/neon.py --branch`.
+
+**Run 1, before the full-text fix** (commit 3):
 
 | Configuration | Recall@1 | Recall@3 | Recall@6 | MRR | Answer in context | Context tokens | p50 ms | p95 ms | Missed | No answer |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -335,55 +341,76 @@ latency is search only, median of 3 rounds, from this machine to Neon.
 | hybrid + rerank | 0.89 | 0.89 | 1.00 | 0.92 | 1.00 | 1471 | 1948 | 2223 | - | - |
 | hybrid + rerank + parents | 0.89 | 0.89 | 1.00 | 0.92 | 1.00 | 1612 | 2558 | 3074 | - | - |
 
-Rank of the first result holding a gold section:
+**The bug.** The full-text leg ORed every query term and ranked by
+`ts_rank_cd`, which rewards repetition: "What is the overdraft cushion?"
+ranked every overdraft-heavy section above the one row named "Overdraft
+cushion". It now orders matches by distinct query terms held, then adjacent
+query-term pairs held as phrases, then `ts_rank_cd` (a Postgres test checks
+the cushion row ranks first). Matching is still any-term, for recall.
 
-| Q | dense | dense + parents | hybrid | hybrid + parents | hybrid + rerank | hybrid + rerank + parents |
+**Run 2, after the fix** (this commit):
+
+| Configuration | Recall@1 | Recall@3 | Recall@6 | MRR | Answer in context | Context tokens | p50 ms | p95 ms | Missed | No answer |
+|---|---|---|---|---|---|---|---|---|---|---|
+| dense | 0.89 | 1.00 | 1.00 | 0.93 | 1.00 | 1325 | 406 | 576 | - | - |
+| dense + parents | 0.89 | 1.00 | 1.00 | 0.93 | 1.00 | 1463 | 690 | 880 | - | - |
+| hybrid | 0.89 | 0.95 | 1.00 | 0.93 | 1.00 | 1340 | 696 | 802 | - | - |
+| hybrid + parents | 0.95 | 1.00 | 1.00 | 0.97 | 1.00 | 1501 | 1079 | 1261 | - | - |
+| hybrid + rerank | 0.89 | 0.89 | 1.00 | 0.92 | 1.00 | 1471 | 1635 | 2061 | - | - |
+| hybrid + rerank + parents | 0.89 | 0.89 | 1.00 | 0.92 | 1.00 | 1638 | 2275 | 2644 | - | - |
+
+Rank of the first result holding a gold section, for the questions that
+weren't first everywhere:
+
+| Q | dense (before / after) | dense + parents (before / after) | hybrid (before / after) | hybrid + parents (before / after) | hybrid + rerank (before / after) | hybrid + rerank + parents (before / after) |
 |---|---|---|---|---|---|---|
-| Q1 | 1 | 1 | 1 | 1 | 1 | 1 |
-| Q2 | 1 | 1 | 1 | 1 | 1 | 1 |
-| Q3 | 1 | 1 | 5 | 5 | 1 | 1 |
-| Q4 | 1 | 1 | 1 | 1 | 1 | 1 |
-| Q5 | 1 | 1 | 1 | 1 | 1 | 1 |
-| Q6 | 1 | 1 | 1 | 1 | 1 | 1 |
-| Q7 | 1 | 1 | 1 | 1 | 1 | 1 |
-| Q8 | 1 | 1 | 1 | 1 | 1 | 1 |
-| Q9 | 1 | 1 | 1 | 1 | 1 | 1 |
-| Q10 | 1 | 1 | 1 | 1 | 1 | 1 |
-| Q11 | 1 | 1 | 1 | 1 | 1 | 1 |
-| Q12 | 3 | 3 | 2 | 2 | 4 | 4 |
-| Q13 | 1 | 1 | 1 | 1 | 1 | 1 |
-| Q14 | 1 | 1 | 3 | 3 | 1 | 1 |
-| Q15 | 1 | 1 | 1 | 1 | 1 | 1 |
-| Q16 | 1 | 1 | 5 | 5 | 4 | 4 |
-| Q17 | 1 | 1 | 1 | 1 | 1 | 1 |
-| Q18 | 3 | 3 | 1 | 1 | 1 | 1 |
-| Q19 | 1 | 1 | 1 | 1 | 1 | 1 |
+| Q3 | 1 / 1 | 1 / 1 | 5 / 1 | 5 / 1 | 1 / 1 | 1 / 1 |
+| Q7 | 1 / 1 | 1 / 1 | 1 / 5 | 1 / 1 | 1 / 1 | 1 / 1 |
+| Q12 | 3 / 3 | 3 / 3 | 2 / 2 | 2 / 2 | 4 / 4 | 4 / 4 |
+| Q14 | 1 / 1 | 1 / 1 | 3 / 1 | 3 / 1 | 1 / 1 | 1 / 1 |
+| Q16 | 1 / 1 | 1 / 1 | 5 / 1 | 5 / 1 | 4 / 4 | 4 / 4 |
+| Q18 | 3 / 3 | 3 / 3 | 1 / 1 | 1 / 1 | 1 / 1 | 1 / 1 |
 
-Why:
+What the two runs show (19 questions, so one question moves MRR by about 0.05):
 
-- **Recall@6 and answer-in-context are 1.00 everywhere.** On 114 chunks the
-  top 6 is 5% of the corpus, so these can't separate the modes; ranking and
-  cost decide.
-- **Dense ranks best** (MRR 0.93, gold first on 17 of 19) and is fastest.
-  Hybrid ranks worse (0.85): it wins the "Zero Liability" exact-term
-  question (rank 3 to 1) and the APY table (3 to 2), but loses Q3 (1 to 5),
-  Q14 (1 to 3) and, surprisingly, the exact-term "overdraft cushion" (1 to
-  5). The full-text query ORs its terms, so "overdraft" matches every
-  overdraft-policy section, and with three equal legs the dense ranking is
-  outvoted. Worth fixing (phrase-first full-text, or leg weights) before
-  hybrid is reconsidered.
-- **Rerank repairs most of hybrid's damage** (MRR 0.92) but costs about 3x
-  the latency (p50 about 1.9 s versus 0.4 s) for no gain over dense.
-- **Parent expansion changed no rank** (it doesn't by design) and the
-  answer was already in context without it; it added about 90 to 140 tokens
-  and 450 to 600 ms (a second round trip to Neon). Its value would show on
-  answers spread across a section, which these questions don't need.
-- **Revisit in Phase 10**, with more questions and harder ones (answers that
-  span sections, more exact identifiers), and after the full-text fix.
+- **Recall@6 and answer-in-context are 1.00 in every configuration, both
+  runs.** The corpus is too small for them to separate anything.
+- **The fix made hybrid equal to dense** (MRR 0.85 to 0.93): Q3, Q14 and
+  Q16 back to rank 1, while keeping its exact-term win on Q18 ("Zero
+  Liability", 3 to 1).
+- **Hybrid + parents ranks best** (0.97): merging hits of one parent section
+  moves the next section up (Q7).
+- **The reranker loses two table rows**: the APY table (Q12) and the
+  cushion row (Q16) fall to rank 4. The MS MARCO cross-encoder was trained
+  on prose passages; table rows are a known weak spot. It stays the
+  provisional default, as specified; Phase 10 should test it on the full
+  corpus and consider skipping it for table chunks.
 
-Testing: CI runs the suite in hybrid mode (`tests/conftest.py`), so all
-three legs stay tested; dense has its own test, and a unit test pins these
-defaults. Rerank didn't become the default, so CI doesn't download its model.
+**Where the latency goes** (`python -m eval.latency_breakdown`, branch,
+from this laptop):
+
+| Component | Measured |
+|---|---|
+| Database work per leg (EXPLAIN ANALYZE) | dense 0.7 ms, full-text 1.2 ms, questions 0.8 ms |
+| Network round trip (warm `SELECT 1`, us-east-1) | 95 to 102 ms |
+| Round trips per search | dense 5 (3 statements + pool pre-ping + COMMIT), hybrid 7 |
+| Dense search end to end | 485 ms, about 5 x the round trip |
+| Hybrid search end to end | 662 ms, about 7 x the round trip |
+| Reranker CPU (this laptop) | about 340 ms for 20 short texts, about 920 ms for 20 real chunks |
+| Neon cold start (compute had scaled to zero; up 1 s) | first connection 2,469 ms |
+| Fresh connection, compute warm (TLS + auth via Neon's proxy) | 1,486 ms; the pool pays it once |
+
+So the 436 ms of run 1 was network: the search itself is about 1 ms. In
+production the backend runs next to the database, where a round trip is
+about a millisecond. Collapsing the access-context statements and the legs
+into fewer round trips would help callers far from Neon; not done.
+
+**Testing.** CI runs hybrid with rerank **off** (`tests/conftest.py`), so
+tests don't load the model; `tests/unit/test_reranker_model.py` runs the
+real cross-encoder, with the model cached between CI runs
+(`FASTEMBED_CACHE_PATH`, actions/cache). A unit test pins the provisional
+defaults. Not done: the Docker image doesn't pre-download the model, so a
+container's first reranked query fetches it (Phase 12).
 
 **One env file** (same commit). The Neon strings moved from `backend/.env`
 to the repo-root `.env` (`NEON_MIGRATION_DATABASE_URL` and
