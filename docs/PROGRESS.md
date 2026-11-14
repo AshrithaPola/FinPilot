@@ -5,7 +5,7 @@ The plan, the architecture checklist and the commit budget are in
 enterprise build, its eval baselines and decisions) is in git history: see
 `docs/PROGRESS.md` at commit 51ba57a.
 
-**Commits: 16 of 25** (budget raised to 24 on 2026-11-14 for Phase 4's two extra commits, then to 25 the same day so the accounts tools and the market tools each get their own commit; no spare) (budget decided 2026-11-13; the Compose-name chore is outside it).
+**Commits: 17 of 25** (budget raised to 24 on 2026-11-14 for Phase 4's two extra commits, then to 25 the same day so the accounts tools and the market tools each get their own commit; commit 17 fixed a test of mine that CI caught, so the plan is now one commit over: 8 left for 9 planned) (budget decided 2026-11-13; the Compose-name chore is outside it).
 
 ## Chores outside the phase budget
 
@@ -428,7 +428,8 @@ finpilot_app's.
 | # | Commit | What |
 |---|---|---|
 | 1 | `9046cf3` | Public sources (SEC 10-K Items 1A and 7, ETF summary prospectuses, CFPB answers): fetched with `SEC_USER_AGENT`, cached outside git, chunked and loaded like the bank's documents; paced embedding in both loaders |
-| 2 | this commit | Accounts tools (read-only, parameterized, under the customer's RLS context) with adversarial tests; search legs in one SQL statement |
+| 2 | `a58e235` | Accounts tools (read-only, parameterized, under the customer's RLS context) with adversarial tests; search legs in one SQL statement |
+| fix | this commit | A hostile-argument test meant to pass validation used `or_1_eq_1`, which the category rule (letters and underscores) rightly refuses; now `or_one_eq_one` (CI caught it) |
 
 ### Notes
 

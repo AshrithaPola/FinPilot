@@ -60,7 +60,7 @@ def test_hostile_arguments_change_nothing(setup):
         with pytest.raises(ToolError):
             tools.call(ME, "list_transactions", arguments)
     # Valid by the rules, still only data: a bind parameter, never SQL.
-    assert tools.call(ME, "list_transactions", {"category": "or_1_eq_1"}) == []
+    assert tools.call(ME, "list_transactions", {"category": "or_one_eq_one"}) == []
     assert tools.call(ME, "list_transactions", {"account_id": "cust-0001-chk--"}) == []
     assert _counts(owner) == before
 
