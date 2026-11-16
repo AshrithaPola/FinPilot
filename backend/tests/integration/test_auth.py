@@ -11,6 +11,7 @@ from tests.conftest import TEST_ORG, TEST_UID
 # One request per protected endpoint; the body only has to get past auth.
 PROTECTED = [
     ("get", "/documents", {}),
+    ("post", "/ask", {"json": {"question": "hi"}}),
     ("post", "/query", {"json": {"question": "hi"}}),
     ("post", "/query/stream", {"json": {"question": "hi"}}),
     ("post", "/feedback", {"json": {"query_id": 1, "thumbs_up": True}}),

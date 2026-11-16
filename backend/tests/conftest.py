@@ -23,6 +23,7 @@ import pytest
 import config
 import deps
 from db import session as db_session
+from engine import graph as engine_graph
 from graph import nodes
 from tests.helpers import FakeEmbeddings, FakeLLM, FakeTokenChecker
 
@@ -73,6 +74,8 @@ def app_env(pg_url, app_url, monkeypatch, fake_llm, token_checker):
     deps.get_llm.cache_clear()
     deps.get_embeddings.cache_clear()
     deps.get_store.cache_clear()
+    deps.get_accounts_tools.cache_clear()  # they hold the store's engine
+    deps.get_market_tools.cache_clear()
 
     # Both the graph nodes (get_llm) and the store factory (get_embeddings)
     # must see the fakes. Embedder activity is mirrored onto the FakeLLM so
@@ -80,6 +83,7 @@ def app_env(pg_url, app_url, monkeypatch, fake_llm, token_checker):
     embeddings = FakeEmbeddings(record_into=fake_llm.embed_calls)
     monkeypatch.setattr(deps, "get_llm", lambda: fake_llm)
     monkeypatch.setattr(nodes, "get_llm", lambda: fake_llm)
+    monkeypatch.setattr(engine_graph, "get_llm", lambda: fake_llm)
     monkeypatch.setattr(deps, "get_embeddings", lambda: embeddings)
     monkeypatch.setattr(deps, "get_token_checker", lambda: token_checker)
 
@@ -90,6 +94,8 @@ def app_env(pg_url, app_url, monkeypatch, fake_llm, token_checker):
     if deps.get_store.cache_info().currsize:
         deps.get_store()._engine.dispose()  # release pooled connections to the test database
     deps.get_store.cache_clear()
+    deps.get_accounts_tools.cache_clear()
+    deps.get_market_tools.cache_clear()
     db_session._session_factory = None
 
 

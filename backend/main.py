@@ -2,7 +2,8 @@
 
 Endpoints:
     GET  /documents     — documents the caller can see, newest first
-    POST /query         — run the full pipeline, return one JSON response
+    POST /ask           — the reasoning engine: plan, agents, one cited answer
+    POST /query         — run the documents pipeline, return one JSON response
     POST /query/stream  — same pipeline over SSE: stage events, then the
                           verified answer, citations, and outcome
     GET  /admin/logs    — recent query logs of the admin's org (admins only)
@@ -216,6 +217,27 @@ def _pipeline_error(exc: Exception, llm_usage: dict, diagnostics: bool) -> JSONR
     if diagnostics:
         content |= {"message": f"{type(exc).__name__}: {exc}", "llm_usage": llm_usage}
     return JSONResponse(status_code=503 if kind else 500, content=content)
+
+
+class AskRequest(BaseModel):
+    question: str = Field(max_length=4000)  # input validation applies the real limit
+
+
+@app.post("/ask")
+async def ask(request: AskRequest, principal: Principal = Depends(get_principal)):
+    """The reasoning engine (Phase 6): plan, run the agents as the caller, and
+    answer with citations, the plan and its steps, and the LLM calls made.
+    /query (documents only) stays until the Phase 9 UI moves to /ask."""
+    from engine.graph import answer
+
+    with track_usage() as llm_usage:
+        try:
+            result = await answer(request.question, principal)
+        except Exception as exc:
+            return _pipeline_error(exc, llm_usage, diagnostics=principal.role == "admin")
+    if result["outcome"] == "rejected_input":
+        raise HTTPException(status_code=422, detail=result["answer"])
+    return result
 
 
 @app.post("/query")

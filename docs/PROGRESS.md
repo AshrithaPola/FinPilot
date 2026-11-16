@@ -5,7 +5,7 @@ The plan, the architecture checklist and the commit budget are in
 enterprise build, its eval baselines and decisions) is in git history: see
 `docs/PROGRESS.md` at commit 51ba57a.
 
-**Commits: 20 of 28** (budget raised to 24 and then 25 on 2026-11-14, to 26 on 2026-11-16, and to 28 the same day: clean commits matter more than the count) (budget decided 2026-11-13; the Compose-name chore is outside it).
+**Commits: 21 of 28** (budget raised to 24 and then 25 on 2026-11-14, to 26 on 2026-11-16, and to 28 the same day: clean commits matter more than the count) (budget decided 2026-11-13; the Compose-name chore is outside it).
 
 ## Chores outside the phase budget
 
@@ -432,7 +432,7 @@ finpilot_app's.
 | fix | `028e2ed` | A hostile-argument test meant to pass validation used `or_1_eq_1`, which the category rule (letters and underscores) rightly refuses; now `or_one_eq_one` (CI caught it) |
 | 3 | `0c889ba` | Balances (starting balances in the generator, `get_balance`); market tools (prices, SEC financials, FRED rates) and the calculator; search in one round trip |
 | fix | `33a4d1c` | The schema test listed every raw-SQL table by hand and failed on 0013's two new ones (the same trap as Phase 1); it now ignores any table the ORM doesn't define, and still catches drift in the log tables (CI caught it) |
-| data | this commit | Card autopay from checking, late payers and late fees, card spending inside the budget; receipts re-rendered |
+| data | `c83c1eb` | Card autopay from checking, late payers and late fees, card spending inside the budget; receipts re-rendered |
 
 ### Notes
 
@@ -632,6 +632,103 @@ finpilot_app's.
 - **Leakage check on main: clean** after the reload.
 - **Not done:** real prices and FRED rates. `ALPHA_VANTAGE_API_KEY` and
   `FRED_API_KEY` aren't in `.env` (it was last saved on 2026-11-14).
+
+## Phase 6: the reasoning engine
+
+| # | Commit | What |
+|---|---|---|
+| 1 | this commit | Planner, executor, agents and summarizer as a LangGraph (`backend/engine/`), `POST /ask`, `python -m engine.cli` |
+
+### Notes
+
+- **The flow** (`engine/graph.py`): validate (length, PII masking) and
+  route in code (small talk answered without a model); the **planner**
+  (LLM call 1) writes a typed plan of at most 6 steps, each an agent, a
+  tool, its arguments and why; the **executor** (code) runs them as the
+  caller; the **summarization agent** (LLM call 2) writes one answer
+  citing numbered evidence. Agents: financial data (the accounts and
+  market tools), documents (hybrid search under the caller's RLS),
+  calculation (the calculator). An out-of-scope plan, or one that found
+  nothing, is answered without the second call.
+- **The plan is untrusted.** Unknown agents or tools, unreadable arguments
+  and steps past 6 are dropped (and listed); every argument still goes
+  through the tool's strict model, and every tool runs as the caller. A
+  plan that asks for another customer gets a failed step, not their data
+  (tests: unit, and `/ask` on Postgres as a customer and as staff).
+- **No arithmetic in the model.** A calculation step refers to earlier
+  results ("$s1[0].balance_cents", "$s2[*].amount_cents"), resolved in
+  code. Amounts are formatted in code too: dollars beside every cents
+  field, SEC figures ("$47,941,000,000", "$7.25 per share"), prices to
+  the cent.
+- **LLM calls per question: 2** (planner, summarizer), under the target of
+  3 to 4; Phase 7's validator adds the third. Counted by the engine itself
+  (`llm_calls`, `llm_calls_by_role`); tokens per role come along for
+  Phase 8.
+- **Found while running it, and fixed:** `get_balance` with no arguments
+  returned every account and the plan took the first row, the credit card,
+  so "can I afford" ran on a card balance. Accounts can now be asked by
+  `account_type` ("checking"), and the planner prompt has short recipes
+  for common question shapes (explain a charge, affordability, spending,
+  companies and funds). Also: the model cites "[1, 2]" as well as "[1]";
+  both are read now.
+- **`/query` stays** (the documents-only pipeline) until the Phase 9 UI
+  moves to `/ask`.
+- **Five questions on Neon** (customer cust-0036, real Gemini,
+  gemini-3.5-flash-lite for both calls; a few 503 retries along the way):
+
+```
+Q: Why was I charged $15 on April 6, 2026?
+  s1 financial_data.list_fees {"start": "2026-04-06", "end": "2026-04-06"} -> ok
+  s2 financial_data.list_transactions {"start": "2026-04-06", "end": "2026-04-06"} -> ok
+  s3 documents.search {"query": "fee 15 dollars", "doc_type": "fee_schedule"} -> ok
+A: You were charged a $15.00 overdraft fee on April 6, 2026, because your checking account was overdrawn by more than $50.00 after a card purchase at Corner Grocer [1][2][5].
+Citations:
+  [1] list_fees
+  [2] list_transactions
+  [5] fee-schedule-2026.md > FinPilot Bank Schedule of Fees: Personal Accounts > 1. Everyday Checking
+LLM calls: 2 {'planner': 1, 'summarizer': 1}; 11.2 s; outcome answered
+
+Q: Can I afford $1,200 this month and stay above $500?
+  s1 financial_data.get_balance {"account_type": "checking"} -> ok
+  s2 calculation.afford {"balance_cents": "$s1[0].balance_cents", "amount_cents": 120000, "keep_at_least_cents": 50000} -> ok
+A: Yes, you can afford $1,200.00 this month and stay above your minimum [2]. Your checking account balance is $2,677.23 as of 2026-06-30 [1]. After the purchase, you will have $1,477.23 remaining [2].
+Citations:
+  [1] get_balance
+  [2] afford
+LLM calls: 2 {'planner': 1, 'summarizer': 1}; 3.2 s; outcome answered
+
+Q: How much did I spend on groceries in May 2026?
+  s1 financial_data.list_transactions {"category": "groceries", "start": "2026-05-01", "end": "2026-05-31", "limit": 200} -> ok
+  s2 calculation.total {"amounts_cents": "$s1[*].amount_cents"} -> ok
+A: You spent $171.05 at FreshFields Market on 2026-05-28 and $88.93 at Corner Grocer on 2026-05-13 [1]. Your total spending for these two grocery transactions was $259.98 [2].
+Citations:
+  [1] list_transactions
+  [2] total
+LLM calls: 2 {'planner': 1, 'summarizer': 1}; 3.2 s; outcome answered
+
+Q: What were Coca-Cola's revenues in its last two fiscal years, and what does it see as a main risk?
+  s1 financial_data.get_company_financials {"ticker": "KO", "metric": "revenue", "years": 2} -> ok
+  s2 documents.search {"query": "Coca-Cola risk factors principal risks", "doc_type": "sec_10k"} -> ok
+A: Coca-Cola's revenues were $47,941,000,000 for the fiscal year ended December 31, 2025, and $47,061,000,000 for the fiscal year ended December 31, 2024 [1]. The company highlights several risks, including unfavorable general economic and geopolitical conditions (such as inflationary pressures, changing interest rates, and commodity price changes) that could negatively impact its financial results [3]. Other noted risks include climate change and environmental factors affecting agricultural productivity and water availability [2][6], consumer demand shifts driven by ingredients or packaging concerns [4], and risks related to its operations, new product execution, and third-party relationships [3][5][7].
+Citations:
+  [1] get_company_financials (SEC EDGAR, 10-K filed 2026-02-20 (accession 0001628280-26-010047))
+  [2] public/ko-10k-2025.md > The Coca-Cola Company Form 10-K, fiscal year ended December 31, 2025 > ITEM 1A. RISK FACTORS > RISKS RELATED TO ENVIRONMENTAL AND SOCIAL FACTORS
+  [3] public/ko-10k-2025.md > The Coca-Cola Company Form 10-K, fiscal year ended December 31, 2025 > ITEM 1A. RISK FACTORS > RISKS RELATED TO OUR OPERATIONS
+  [4] public/ko-10k-2025.md > The Coca-Cola Company Form 10-K, fiscal year ended December 31, 2025 > ITEM 1A. RISK FACTORS > RISKS RELATED TO CONSUMER DEMAND FOR OUR PRODUCTS
+  [5] public/ko-10k-2025.md > The Coca-Cola Company Form 10-K, fiscal year ended December 31, 2025 > ITEM 1A. RISK FACTORS > RISKS RELATED TO CONSUMER DEMAND FOR OUR PRODUCTS
+  [6] public/ko-10k-2025.md > The Coca-Cola Company Form 10-K, fiscal year ended December 31, 2025 > ITEM 1A. RISK FACTORS > RISKS RELATED TO ENVIRONMENTAL AND SOCIAL FACTORS
+  [7] public/ko-10k-2025.md > The Coca-Cola Company Form 10-K, fiscal year ended December 31, 2025 > ITEM 1A. RISK FACTORS > RISKS RELATED TO OUR OPERATIONS
+LLM calls: 2 {'planner': 1, 'summarizer': 1}; 5.4 s; outcome answered
+
+Q: What is VTI's expense ratio, and what is its latest price?
+  s1 documents.search {"query": "VTI expense ratio", "doc_type": "fund_prospectus"} -> ok
+  s2 financial_data.get_price {"symbol": "VTI"} -> ok
+A: Vanguard Total Stock Market ETF (VTI) has a total annual fund operating expense ratio of 0.03% [1]. Its synthetic demo price is $337.35 as of June 30, 2026 [7].
+Citations:
+  [1] public/vti-summary-prospectus-2026.md > Vanguard Total Stock Market ETF (VTI) summary prospectus, April 2026 > Fees and Expenses
+  [7] get_price (Synthetic demo price (not a market price))
+LLM calls: 2 {'planner': 1, 'summarizer': 1}; 4.7 s; outcome answered
+```
 
 ## Phase 10 notes (from 2026-11-14)
 

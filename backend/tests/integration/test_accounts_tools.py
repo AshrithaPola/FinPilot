@@ -97,3 +97,11 @@ def test_balances_are_starting_balance_plus_transactions_minus_fees(setup):
                + [f["assessed_on"] for f in data["fees"] if f["account_id"] == "cust-0001-chk"])
     assert checking["as_of"] == last.isoformat() and checking["starting_balance_on"] == "2025-07-01"
     assert tools.call(ME, "get_balance", {"account_id": "cust-0002-chk"}) == []  # exists, isn't ours
+
+
+def test_a_balance_can_be_asked_by_account_type(setup):
+    tools, _ = setup
+    [checking] = tools.call(ME, "get_balance", {"account_type": "checking"})
+    assert checking["account_id"] == "cust-0001-chk"
+    with pytest.raises(ToolError):
+        tools.call(ME, "get_balance", {"account_type": "checking'; --"})

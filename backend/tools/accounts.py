@@ -39,8 +39,12 @@ FeeType = Literal["overdraft", "nsf", "monthly_maintenance", "atm", "foreign_tra
                   "late_payment"]
 
 
+AccountType = Literal["checking", "savings", "credit", "brokerage"]
+
+
 class BalanceArgs(Args):
     account_id: Id | None = None
+    account_type: AccountType | None = None  # the planner knows "checking", not the account's id
 
 
 class _Period(Args):
@@ -115,7 +119,8 @@ def _balance(conn, args: BalanceArgs) -> list[dict]:
         LEFT JOIN (SELECT account_id, sum(amount_cents) FILTER (WHERE NOT waived) AS total,
                           max(assessed_on) AS last
                    FROM fees GROUP BY account_id) f USING (account_id)
-        WHERE CAST(:account_id AS text) IS NULL OR a.account_id = :account_id
+        WHERE (CAST(:account_id AS text) IS NULL OR a.account_id = :account_id)
+          AND (CAST(:account_type AS text) IS NULL OR a.type = :account_type)
         ORDER BY a.account_id
     """, args.model_dump())
 
@@ -130,12 +135,15 @@ def _holdings(conn, args: NoArgs) -> list[dict]:
 
 TOOLS = {t.name: t for t in (
     Tool("list_accounts", "The customer's accounts: type, product, opened date, status.", NoArgs, _accounts),
-    Tool("get_balance", "Current balance of each of the customer's accounts (or one account_id), "
-         "in cents, as of its last posted activity; negative means overdrawn, or owed on a card.",
+    Tool("get_balance", "Current balance of each of the customer's accounts, or of one account_type "
+         "(checking, savings, credit, brokerage) or account_id, in cents, as of its last posted activity; "
+         "negative means overdrawn, or owed on a card.",
          BalanceArgs, _balance),
     Tool("list_cards", "The customer's cards: last 4 digits, network, status, expiry.", NoArgs, _cards),
-    Tool("list_transactions", "The customer's transactions, newest first; optional account, date "
-         "range (start, end), category and limit (at most 200).", TransactionArgs, _transactions),
+    Tool("list_transactions", "The customer's transactions, newest first (amount_cents negative = money "
+         "out); optional account, date range (start, end), category (groceries, dining, transport, shopping, "
+         "health, home, travel, housing, subscriptions, income, transfer, cash, card_payment, payment, "
+         "interest) and limit (at most 200).", TransactionArgs, _transactions),
     Tool("list_fees", "Fees charged to the customer, newest first; optional account, date range, "
          "fee type, include_waived and limit (at most 200).", FeeArgs, _fees),
     Tool("list_holdings", "The customer's investment holdings: symbol, name, quantity, cost basis.",

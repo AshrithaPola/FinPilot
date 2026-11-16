@@ -39,6 +39,7 @@ class FakeLLM:
         self.chat_calls: list[dict] = []
         self.embed_calls: list[list[str]] = []
         self.receipt: dict = {}  # what the receipt reader (vision) returns
+        self.plan: dict = {"intent": "", "out_of_scope": True, "steps": []}  # what the planner returns
 
     async def complete_text(self, model, system, user, max_tokens=4096, role="") -> str:
         self.chat_calls.append({"model": model, "system": system, "user": user, "role": role})
@@ -52,6 +53,8 @@ class FakeLLM:
                                 "image": image})
         if "receipt reader" in system:
             return dict(self.receipt)
+        if role == "planner":
+            return dict(self.plan)
         if "relevance grader" in system:
             return {"relevant": self.relevant}
         if "groundedness auditor" in system:
