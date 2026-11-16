@@ -29,6 +29,9 @@ def bank(client, pg_url):
             INSERT INTO users (firebase_uid, org_id, role, clearance, customer_id) VALUES
               ('uid-cust-1', :org, 'viewer', 0, 'cust-0001'),
               ('uid-staff', :org, 'admin', 2, NULL)"""), {"org": synthetic.BANK_ORG})
+        conn.execute(sa.text("INSERT INTO orgs VALUES ('other', 'Other org')"))
+        conn.execute(sa.text("INSERT INTO users (firebase_uid, org_id, role, clearance) "
+                             "VALUES ('uid-other-admin', 'other', 'admin', 2)"))
     owner.dispose()
     add_text_document("The overdraft fee is $15.00 per item over the $50.00 cushion.", "fees.txt",
                       org_id=synthetic.BANK_ORG)
@@ -71,3 +74,27 @@ def test_staff_get_no_customer_data(bank, app_env):
     [step] = body["plan"]["steps"]
     assert step["status"] == "failed" and "only for signed-in bank customers" in step["error"]
     assert body["outcome"] == "nothing_found" and body["llm_calls"] == 1  # refused outright: no re-plan
+
+
+def test_each_ask_is_traced_and_only_its_orgs_admins_see_it(bank, app_env):
+    app_env.plan = {"intent": "afford", "out_of_scope": False, "steps": [
+        _step("s1", "financial_data", "get_balance", {"account_type": "checking"}),
+        _step("s2", "documents", "search", {"query": "overdraft fee cushion"})]}
+    app_env.answer = "Your checking balance is known [1]; the overdraft fee is $15.00 [2]."
+    body = bank.post("/ask", headers=_as("uid-cust-1"), json={"question": "Balance? Fee?"}).json()
+    assert [t["stage"] for t in body["timeline"]][:4] == ["validate", "route", "plan", "execute"]
+    assert body["trace"]["embedding_calls"] == 0  # the fake embedder isn't a priced model call
+
+    listed = bank.get("/admin/traces", headers=_as("uid-staff")).json()["traces"]
+    [row] = [t for t in listed if t["trace_id"] == body["trace_id"]]
+    assert row["customer_id"] == "cust-0001" and row["outcome"] == "answered" and row["total_ms"] > 0
+    detail = bank.get(f"/admin/traces/{body['trace_id']}", headers=_as("uid-staff")).json()
+    kinds = {s["kind"] for s in detail["spans"]}
+    assert {"node", "step", "tool", "search", "retrieval", "check"} <= kinds
+    assert detail["summary"]["llm_calls_by_role"] == {"planner": 1, "summarizer": 1, "validator": 1}
+
+    # Another org's admin: not listed, and the detail is a 404 (RLS). A customer isn't an admin.
+    assert body["trace_id"] not in {t["trace_id"] for t in
+                                    bank.get("/admin/traces", headers=_as("uid-other-admin")).json()["traces"]}
+    assert bank.get(f"/admin/traces/{body['trace_id']}", headers=_as("uid-other-admin")).status_code == 404
+    assert bank.get("/admin/traces", headers=_as("uid-cust-1")).status_code == 403

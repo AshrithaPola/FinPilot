@@ -4,14 +4,17 @@
 
 Uses DATABASE_URL (finpilot_app; e.g. through scripts/neon.py run) and the
 configured LLM. Prints each question's plan, its steps, the answer with its
-citations, and the LLM calls it took.
+citations, and the LLM calls it took, and stores each request's trace
+(tracing.py), like /ask.
 """
 import argparse
 import asyncio
 import json
 
+import tracing
 from bank.synthetic import BANK_ORG
 from db.access import Access
+from deps import get_store
 from engine.graph import answer
 
 
@@ -33,6 +36,11 @@ def show(question: str, result: dict) -> str:
             f"{name} {'pass' if v['passed'] else 'FAIL: ' + v['reason']} ({v['by']})" for name, v in verdict.items()))
     lines.append(f"LLM calls: {result['llm_calls']} {result['llm_calls_by_role']}; "
                  f"{result['timings']['total_ms'] / 1000:.1f} s; outcome {result['outcome']}")
+    t = result["trace"]
+    lines.append(f"Trace {result['trace_id']}: Gemini {t['llm_ms'] / 1000:.1f} s ({t['llm_calls']} calls, "
+                 f"{t['retries']} retries), embeddings {t['embedding_ms'] / 1000:.1f} s, search "
+                 f"{t['search_ms'] / 1000:.1f} s (rerank {t['rerank_ms'] / 1000:.1f} s), tools "
+                 f"{t['tools_ms'] / 1000:.1f} s, other {t['other_ms'] / 1000:.1f} s; est. ${t['est_cost_usd']:.5f}")
     lines.append("Timings: " + ", ".join(f"{k[:-3]} {v / 1000:.1f} s" for k, v in result["timings"].items()))
     return "\n".join(lines)
 
@@ -40,7 +48,11 @@ def show(question: str, result: dict) -> str:
 async def main(customer: str, questions: list[str]) -> None:
     principal = Access(org_id=BANK_ORG, clearance=0, customer_id=customer)
     for question in questions:
-        print(show(question, await answer(question, principal)), end="\n\n", flush=True)
+        with tracing.tracing() as trace:
+            result = await answer(question, principal)
+        result["trace"] = trace.totals()
+        tracing.save(get_store().engine, principal, trace, result, user_id=None, question=result["question"])
+        print(show(question, result), end="\n\n", flush=True)
 
 
 if __name__ == "__main__":

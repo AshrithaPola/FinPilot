@@ -5,7 +5,7 @@ The plan, the architecture checklist and the commit budget are in
 enterprise build, its eval baselines and decisions) is in git history: see
 `docs/PROGRESS.md` at commit 51ba57a.
 
-**Commits: 22 of 28** (budget raised to 24 and then 25 on 2026-11-14, to 26 on 2026-11-16, and to 28 the same day: clean commits matter more than the count) (budget decided 2026-11-13; the Compose-name chore is outside it).
+**Commits: 23 of 28** (budget raised to 24 and then 25 on 2026-11-14, to 26 on 2026-11-16, and to 28 the same day: clean commits matter more than the count) (budget decided 2026-11-13; the Compose-name chore is outside it).
 
 ## Chores outside the phase budget
 
@@ -893,6 +893,104 @@ Check 1: gatekeeper pass (llm); auditor pass (llm); strategist pass (llm)
 LLM calls: 3 {'planner': 1, 'summarizer': 1, 'validator': 1}; 22.1 s; outcome answered
 ```
 
+## Phase 8: observability
+
+| # | Commit | What |
+|---|---|---|
+| 1 | this commit | A trace per /ask in Postgres (`tracing.py`, migration 0014), `/admin/traces`, the stage timeline in `/ask`, per-call timeouts |
+
+### Notes
+
+- **One trace per request** (`traces`, migration 0014), written by `/ask`
+  and `python -m engine.cli`. Its spans:
+  - every engine node;
+  - every agent step with its status;
+  - every tool call;
+  - every search, with its top rerank score, whether it was weak, and the
+    sections found;
+  - the database legs and the reranker separately;
+  - every LLM call: model, role, prompt, output and thinking tokens,
+    attempts, each failed attempt's error, and the estimated cost;
+  - every embedding call: model, texts (shortened), estimated tokens and
+    cost;
+  - each validator's verdict and whether code or the LLM decided it.
+
+  The summary columns hold the outcome, total time, LLM calls and estimated
+  cost. The question stored is the redacted one the engine saw.
+- **Under RLS:** an org sees only its own traces, and a customer's context
+  only their own (the leakage check now counts `traces` among the
+  customer-owned tables: no leaks on Neon). A trace that fails to save is
+  logged, never fails the answer.
+- **Costs are estimates** at Gemini's Standard list prices (flash-lite
+  $0.30 / $2.50 per million input / output tokens, thinking billed as
+  output; gemini-embedding-2 $0.20; checked 2026-11-16 on
+  ai.google.dev/gemini-api/docs/pricing). The project runs on the free
+  tier, which costs nothing. Embedding tokens are counted with the
+  chunker's tokenizer.
+- **Per-call timeouts:** `LLM_CALL_TIMEOUT_S` (45 s) caps a whole LLM or
+  embedding call, retries and their waits included; each attempt keeps
+  its own 60 s cap inside that. A call past it raises `TimeoutError`, and
+  `/ask` reports `timeout`. Batch loads can raise it.
+- **`GET /admin/traces`** (admins, own org): recent requests with total
+  time, LLM calls, estimated cost, retries and outcome.
+  **`GET /admin/traces/{id}`**: one trace with every span; another org's
+  trace is a 404. A page for these comes with the Phase 9 UI.
+- **`/ask` returns `timeline`** (each stage's start and duration, for the
+  Phase 9 progress display), `trace_id`, and the trace's totals.
+
+### Latency, from the traces (the five standard questions, cust-0036, Neon)
+
+| Question | Total | Gemini (LLM) | Embeddings | Search: DB legs | Search: rerank | Tools (SQL) | Other |
+|---|---|---|---|---|---|---|---|
+| $15 charge | 31.2 s | 21.9 s | 0.5 s | 0.7 s | 1.5 s | 1.5 s | 5.2 s (first request: clients, pool, Neon) |
+| Afford $1,200 | 27.0 s | 26.3 s (validator 20.5 s, 1 retry) | – | – | – | 0.7 s | 0.0 s |
+| Groceries in May | 11.7 s | 11.0 s | – | – | – | 0.7 s | 0.0 s |
+| Coca-Cola | 12.5 s | 9.4 s | 0.5 s | 0.7 s | 1.5 s | 0.5 s | 0.0 s |
+| VTI | 35.9 s | 29.7 s (planner 18.4 s, 2 retries) | 4.6 s | 0.4 s | 0.9 s | 0.3 s | 0.0 s |
+| **All five** | **118.3 s** | **98.3 s (83%)** | **5.6 s (5%)** | **1.7 s** | **3.9 s** | **3.6 s** | **5.2 s** |
+
+- **Gemini is 83% of the time**, and its variance is the latency: the
+  same role took 0.8 s in one question and 9.3 s in another, and three
+  retries (503 "high demand") cost 13 s and 20 s on two questions.
+- **Search is 5.6 s in all, and most of it is the reranker:** the
+  cross-encoder runs on this machine's CPU, 0.9 to 1.5 s per search,
+  against 0.4 to 0.7 s for the three database legs in one round trip.
+  That's the one cost in our hands; Phase 10 weighs it with the
+  rerank-on-tables question.
+- **Tools** are about 0.3 to 0.7 s each: one Neon round trip each, plus
+  the access context.
+- **Our own code** is negligible after the first request. The first one
+  paid about 5 s to create the Gemini client, the connection pool and
+  the store (its startup check of the role connects to Neon).
+- **Estimated cost per question** at list prices: $0.0018 to $0.0036 for
+  three LLM calls, $0.0051 for the vague question that regenerated.
+
+### Weak-search test
+
+Three deliberately vague questions on Neon (cust-0036), traced:
+
+| Question | What the planner searched | Top rerank | Weak? | Result |
+|---|---|---|---|---|
+| "What was that fee thing from last spring?" | no search: `list_fees` for March to May | – | – | listed the fees; the auditor (LLM) failed the first answer on its dates, the regeneration passed (5 LLM calls) |
+| "Is there some kind of penalty if I pay my card a bit late?" | "late payment fee credit card penalty APR" | 3.59 | no | the card agreement's late fee (up to $40.00; $39.00 before 2026-02-01) |
+| "What's the deal with you holding back money when I deposit a check?" | "check deposit hold policy availability funds" | 2.36 | no | the deposit agreement's hold rules, correct |
+
+- **The rewrite didn't fire, and the reason is the planner:** it already
+  turns the customer's words into the bank's terms before searching. The
+  eight searches of this run scored 2.36 to 6.00 at the top, far above the
+  cutoff of 0, and all answered.
+- **The cutoff stays at 0 for now: I couldn't tune it from this.** Tuning
+  needs scores of genuinely weak searches: the customer's own wording
+  searched as is, and questions the corpus can't answer (mortgage
+  refinancing, bitcoin). The script for that is ready, but this machine's
+  free memory stayed between 0.9 and 2.1 GB, under the 2 GB floor for
+  Gemini calls, so it didn't run. One run needs 10 embeddings and 5
+  rewrites. (The traced run above started at 1.89 GB, under the floor; I
+  noticed only afterwards.)
+- **The regeneration did fire live** on the "fee thing" question, the
+  first time in a real run: the LLM auditor caught dates it judged
+  misstated, and the second answer passed.
+
 ## Phase 10 notes (from 2026-11-14)
 
 - **Reranker and tables.** The cross-encoder demoted table-row chunks
@@ -902,6 +1000,13 @@ LLM calls: 3 {'planner': 1, 'summarizer': 1, 'validator': 1}; 22.1 s; outcome an
   read as 1 February (2 of 10 dates after the card-data change). Fixed in
   Phase 7 by telling the reader the receipts are US-format (10/10); keep
   dates whose day is 12 or less among the harder receipts.
+- **Self-judging.** The same model (gemini-3.5-flash-lite) writes and
+  validates the answer, and a model tends to approve its own output. The
+  code checks (figures, citations, advice phrasing) don't depend on it;
+  for Phase 10, try a different model as the validator and measure what
+  it catches.
+- **Reranker cost.** The cross-encoder is 0.9 to 1.5 s a search on this
+  CPU (Phase 8 traces), more than the database legs.
 - **Harder receipts.** Add 5 receipt images that are blurred, rotated and
   low-contrast, so the vision accuracy claim (10/10 per field) isn't
   measured on clean renders only.

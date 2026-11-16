@@ -32,6 +32,7 @@ from typing import Protocol
 from google import genai
 from google.genai import types as genai_types
 
+import tracing
 from llm import _BackoffLLM, _usage, gemini_retry_delay
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,7 @@ class LocalEmbeddings:
 
 
 class GeminiEmbeddings(_BackoffLLM):
+    trace_kind = "embedding"
     def __init__(self, client: genai.Client, model: str, dimension: int, batch_size: int = 100,
                  **backoff):
         super().__init__(**backoff)
@@ -115,7 +117,7 @@ class GeminiEmbeddings(_BackoffLLM):
                     config=self._config,
                 )
 
-            response = await self._call(self.model, request)
+            response = await self._call(self.model, request, details=_trace_details(batch))
             if len(response.embeddings) != len(batch):
                 raise RuntimeError(f"{self.model} returned {len(response.embeddings)} embeddings "
                                    f"for {len(batch)} texts")
@@ -133,6 +135,17 @@ class GeminiEmbeddings(_BackoffLLM):
 
     async def embed_query(self, text: str) -> list[float]:
         return (await self._embed([GEMINI_QUERY_PREFIX + text]))[0]
+
+
+def _trace_details(batch: list[str]) -> dict | None:
+    """The texts (shortened) and an estimate of their tokens, for the
+    request's trace; nothing when no trace is open (bulk loads)."""
+    if tracing.current() is None:
+        return None
+    from ingestion.chunking import tokens
+
+    return {"n_texts": len(batch), "texts": [t[: tracing.MAX_TEXT] for t in batch[:5]],
+            "est_tokens": sum(tokens(t) for t in batch)}
 
 
 def build_embeddings(settings) -> EmbeddingProvider:
@@ -156,4 +169,5 @@ def build_embeddings(settings) -> EmbeddingProvider:
         batch_size=settings.embedding_batch_size,
         max_attempts=settings.llm_max_attempts,
         request_timeout_s=settings.llm_request_timeout_s,
+        call_timeout_s=settings.llm_call_timeout_s,
     )

@@ -29,6 +29,7 @@ from ingestion.store import Filters
 from tools.accounts import TOOLS as ACCOUNT_TOOLS
 from tools.calculator import calculate
 from tools.common import AccessRefused, ToolError
+import tracing
 
 _REF = re.compile(r"^\$(s\d+)((?:\[(?:\d+|\*)\]|\.[a-z_]+)*)$")
 _PART = re.compile(r"\[(\d+|\*)\]|\.([a-z_]+)")
@@ -149,13 +150,17 @@ class Executor:
         for step in plan.steps:
             if step.status != "planned":
                 continue
-            try:
-                step.result = await self._step(step, resolve(step.arguments, results), principal)
-                step.status = "done"
-                results[step.id] = step.result
-            except (StepError, ToolError) as exc:
-                step.status, step.error = "failed", str(exc)
-                step.retryable = not isinstance(exc, AccessRefused)
+            with tracing.span("step", f"{step.agent}.{step.tool}", step=step.id, round=step.round) as span:
+                try:
+                    step.result = await self._step(step, resolve(step.arguments, results), principal)
+                    step.status = "done"
+                    results[step.id] = step.result
+                except (StepError, ToolError) as exc:
+                    step.status, step.error = "failed", str(exc)
+                    step.retryable = not isinstance(exc, AccessRefused)
+                span.update(status=step.status, error=step.error, note=step.note,
+                            rows=len(step.result) if isinstance(step.result, list) else None)
+            if step.status == "failed":
                 continue
             for item in self._evidence(step):
                 evidence.append({"n": len(evidence) + 1, **item})
@@ -170,7 +175,8 @@ class Executor:
         if step.tool in AS_OF_TODAY and self._today and not arguments.get("as_of"):
             arguments = {**arguments, "as_of": self._today.isoformat()}
         tools = self._accounts if step.tool in ACCOUNT_TOOLS else self._market
-        return tools.call(principal, step.tool, arguments)
+        with tracing.span("tool", step.tool):
+            return tools.call(principal, step.tool, arguments)
 
     async def _search(self, step: Step, arguments: dict, principal) -> list[dict]:
         query = arguments.get("query")
@@ -185,16 +191,25 @@ class Executor:
             raise StepError("as_of must be a date, YYYY-MM-DD") from None
         filters = Filters(doc_type=doc_type, as_of=as_of or self._today)
         store = self._store.scoped(principal)
-        hits = await store.search(query, filters=filters)
+        hits = await self._traced_search(store, query, filters)
         if self._rewrite and weak(query, hits):
             better = await self._rewrite(query, hits)
             if better and better.strip().casefold() != query.casefold() and 2 <= len(better) <= 500:
-                again = await store.search(better, filters=filters)
+                again = await self._traced_search(store, better, filters)
                 keep = not weak(better, again)
                 step.note = f"weak evidence; searched again as {better!r}" + ("" if keep else ", no better")
                 hits = again if keep else hits
         return [{"chunk_id": h.chunk_id, "filename": h.filename, "section": h.section, "text": h.text}
                 for h in hits]
+
+    @staticmethod
+    async def _traced_search(store, query: str, filters: Filters) -> list:
+        with tracing.span("search", query[: tracing.MAX_TEXT]) as span:
+            hits = await store.search(query, filters=filters)
+            scores = [h.rerank_score for h in hits if h.rerank_score is not None]
+            span.update(hits=len(hits), top_rerank=max(scores) if scores else None, weak=weak(query, hits),
+                        sections=[f"{h.filename} > {h.section}"[:120] for h in hits[:3]])
+        return hits
 
     @staticmethod
     def _evidence(step: Step) -> list[dict]:

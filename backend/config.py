@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     # Seconds before a single Gemini request is abandoned and retried (counts
     # as one failed attempt). Free-tier requests occasionally hang for minutes.
     llm_request_timeout_s: float = 60.0
+    # Seconds for a whole call, retries and their waits included, so one slow
+    # or overloaded model can't hang a request (raises TimeoutError, which
+    # /ask reports as "timeout"). Raise it for long batch jobs if needed.
+    llm_call_timeout_s: float = 45.0
 
     # --- Embeddings (embeddings.py) ---
     # gemini (default): gemini-embedding-2 via the Gemini API key, or Vertex

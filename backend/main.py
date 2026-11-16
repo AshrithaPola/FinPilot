@@ -43,6 +43,7 @@ from deps import get_store
 from graph.pipeline import pipeline
 from ingestion.store import Filters
 from llm import classify_error, track_usage
+import tracing
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("finpilot")
@@ -230,11 +231,18 @@ async def ask(request: AskRequest, principal: Principal = Depends(get_principal)
     /query (documents only) stays until the Phase 9 UI moves to /ask."""
     from engine.graph import answer
 
-    with track_usage() as llm_usage:
+    with tracing.tracing() as trace, track_usage() as llm_usage:
         try:
             result = await answer(request.question, principal)
         except Exception as exc:
+            from graph.redaction import redact
+
+            failed = {"outcome": f"error: {classify_error(exc) or 'internal'}",
+                      "timings": {"total_ms": trace.elapsed_ms()}}
+            await _save_trace(trace, principal, failed, redact(request.question)[0])
             return _pipeline_error(exc, llm_usage, diagnostics=principal.role == "admin")
+    result["trace"] = trace.totals()
+    await _save_trace(trace, principal, result, result.pop("question", ""))
     if result["outcome"] == "rejected_input":
         raise HTTPException(status_code=422, detail=result["answer"])
     return result
@@ -367,6 +375,30 @@ async def admin_logs(limit: int = 20, principal: Principal = Depends(get_admin_p
     """The admin's own org's logs: RLS hides every other org's rows."""
     return {"logs": await asyncio.to_thread(partial(db.fetch_logs, min(limit, 100),
                                                     access=principal))}
+
+
+async def _save_trace(trace, principal: Principal, result: dict, question: str) -> None:
+    store = get_store()
+    if store is not None:
+        await asyncio.to_thread(partial(tracing.save, store.engine, principal, trace, result,
+                                        user_id=principal.user_id, question=question))
+
+
+@app.get("/admin/traces")
+async def admin_traces(limit: int = 20, principal: Principal = Depends(get_admin_principal)):
+    """The admin's own org's recent /ask requests: latency, LLM calls,
+    estimated cost and outcome (RLS hides every other org's)."""
+    return {"traces": await asyncio.to_thread(tracing.recent, get_store().engine, principal,
+                                              max(1, min(limit, 100)))}
+
+
+@app.get("/admin/traces/{trace_id}")
+async def admin_trace(trace_id: str, principal: Principal = Depends(get_admin_principal)):
+    """One request's trace, every span; 404 for another org's."""
+    trace = await asyncio.to_thread(tracing.one, get_store().engine, principal, trace_id)
+    if trace is None:
+        raise HTTPException(status_code=404, detail="No such trace.")
+    return trace
 
 
 @app.get("/admin/stats")

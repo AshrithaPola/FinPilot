@@ -36,6 +36,7 @@ import base64
 import contextvars
 import json
 import logging
+import time
 from contextlib import contextmanager
 
 import anthropic
@@ -43,6 +44,8 @@ from anthropic import AsyncAnthropic
 from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types as genai_types
+
+import tracing
 
 logger = logging.getLogger(__name__)
 
@@ -68,14 +71,19 @@ def track_usage():
 class _BackoffLLM:
     """Shared retry loop. Subclasses say which exceptions are retryable."""
 
+    trace_kind = "llm"  # the span kind each call records (tracing.py)
+
     def __init__(self, max_attempts: int = 5, base_delay_s: float = 2.0, max_delay_s: float = 60.0,
-                 request_timeout_s: float | None = None):
+                 request_timeout_s: float | None = None, call_timeout_s: float | None = None):
         self._max_attempts = max_attempts
         self._base_delay_s = base_delay_s
         self._max_delay_s = max_delay_s
         # Per attempt; None = wait indefinitely. A hung request raises
         # TimeoutError, which the subclass may treat as retryable.
         self._request_timeout_s = request_timeout_s
+        # The whole call, retries and their waits included: one slow or
+        # overloaded model can't hold a request longer than this.
+        self._call_timeout_s = call_timeout_s
 
     def _retry_delay(self, exc: Exception) -> float | None:
         """Seconds the server asked us to wait (0.0 = no hint), or None if
@@ -87,19 +95,40 @@ class _BackoffLLM:
         usage metadata; None where the provider doesn't report one."""
         return dict.fromkeys(TOKEN_FIELDS)
 
-    async def _call(self, model: str, request, role: str = ""):
+    async def _call(self, model: str, request, role: str = "", details: dict | None = None):
+        """One call with retries, traced as one span: model, role, attempts,
+        each failed attempt's error, tokens and the estimated cost."""
+        with tracing.span(self.trace_kind, model, role=role, **(details or {})) as span:
+            span["failures"] = []
+            response = await self._attempts(model, request, role, span)
+            counts = self._token_counts(response)
+            if any(counts.values()):
+                span.update(counts)
+            span["est_cost_usd"] = tracing.cost(model, counts.get("prompt_tokens") or span.get("est_tokens"),
+                                                counts.get("output_tokens"), counts.get("thinking_tokens"))
+            return response
+
+    async def _attempts(self, model: str, request, role: str, span: dict):
         usage = _usage.get()
+        deadline = None if self._call_timeout_s is None else time.monotonic() + self._call_timeout_s
         for attempt in range(1, self._max_attempts + 1):
+            span["attempts"] = attempt
             if usage is not None:
                 attempts = usage["attempts_per_model"]
                 attempts[model] = attempts.get(model, 0) + 1
+            timeout = self._request_timeout_s
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(f"{model} gave no answer within {self._call_timeout_s:.0f} s")
+                timeout = remaining if timeout is None else min(timeout, remaining)
             try:
-                response = await asyncio.wait_for(request(), self._request_timeout_s)
+                response = await asyncio.wait_for(request(), timeout)
             except Exception as exc:
+                error = f"{type(exc).__name__}: {exc}"
                 if usage is not None:
-                    usage["failures"].append(
-                        {"model": model, "attempt": attempt, "error": f"{type(exc).__name__}: {exc}"}
-                    )
+                    usage["failures"].append({"model": model, "attempt": attempt, "error": error})
+                span["failures"].append({"attempt": attempt, "error": error[:tracing.MAX_TEXT]})
                 hint = self._retry_delay(exc)
                 if hint is None or attempt == self._max_attempts:
                     raise
@@ -107,6 +136,8 @@ class _BackoffLLM:
                     self._max_delay_s,
                     hint or self._base_delay_s * 2 ** (attempt - 1),
                 )
+                if deadline is not None and time.monotonic() + delay >= deadline:
+                    raise TimeoutError(f"{model} gave no answer within {self._call_timeout_s:.0f} s") from exc
                 logger.warning(
                     "%s on %s (attempt %d/%d); retrying in %.1fs",
                     type(exc).__name__, model, attempt, self._max_attempts, delay,
@@ -385,6 +416,7 @@ def build_llm(settings) -> GeminiLLM | ClaudeLLM:
             genai.Client(api_key=settings.gemini_api_key),
             checker_thinking_level=settings.grading_thinking_level,
             request_timeout_s=settings.llm_request_timeout_s,
+            call_timeout_s=settings.llm_call_timeout_s,
             **backoff,
         )
     if not settings.anthropic_api_key:

@@ -55,6 +55,7 @@ from datetime import date
 
 import sqlalchemy as sa
 
+import tracing
 from config import Settings
 from db.access import WRITER_ROLES, Access, access_statement, set_access  # noqa: F401  (Access re-exported)
 from embeddings import EmbeddingProvider
@@ -556,12 +557,16 @@ class HybridStore:
 
     def _search(self, query: str, query_vector: list[float], doc_ids: list[str] | None,
                 filters: Filters | None) -> list[RetrievedChunk]:
-        ranked = self._fused_ranking(query, query_vector, doc_ids, filters)
+        with tracing.span("retrieval", self._settings.retrieval_mode) as span:
+            ranked = self._fused_ranking(query, query_vector, doc_ids, filters)
+            span["candidates"] = len(ranked)
         if self._settings.rerank and ranked:
             head = ranked[: self._settings.rerank_candidates]
-            for chunk, score in zip(head, self._reranker.scores(query, [c.text for c in head])):
-                chunk.rerank_score = round(score, 4)
-            ranked = sorted(head, key=lambda c: -c.rerank_score)
+            with tracing.span("rerank", self._settings.rerank_model, candidates=len(head)) as span:
+                for chunk, score in zip(head, self._reranker.scores(query, [c.text for c in head])):
+                    chunk.rerank_score = round(score, 4)
+                ranked = sorted(head, key=lambda c: -c.rerank_score)
+                span["top_score"] = ranked[0].rerank_score
         hits = ranked[: self._settings.top_k]
         if self._settings.parent_expansion and hits:
             return self._expanded(hits)

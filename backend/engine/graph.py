@@ -43,6 +43,7 @@ from engine.plan import PLAN_SCHEMA, REPLAN_SYSTEM, Plan, parse_plan, planner_pr
 from graph.nodes import input_validation_node
 from graph.routing import SMALL_TALK_RESPONSE, is_small_talk
 from llm import track_usage
+import tracing
 
 OUT_OF_SCOPE = ("I can help with your FinPilot Bank accounts, the bank's products and policies, "
                 "and the investments and companies in our documents, but not with that.")
@@ -251,6 +252,10 @@ async def check_node(state: EngineState) -> dict:
             VALIDATOR_SCHEMA, max_tokens=1024, role="validator")
         calls.append("validator")
         verdict = {name: {**v, "by": "llm"} for name, v in verdict_from(reply).items()}
+    trace = tracing.current()
+    for name, v in verdict.items() if trace else ():
+        trace.add("check", name, time.perf_counter(), attempt=len(state.get("validation", [])) + 1,
+                  passed=v["passed"], by=v["by"], reason=v["reason"][: tracing.MAX_TEXT])
     validation = state.get("validation", []) + [verdict]
     out = {"validation": validation, "llm_calls": calls,
            "timings": _timed(state, f"check{len(validation)}_ms", start)}
@@ -269,12 +274,21 @@ def _after_check(state: EngineState) -> str:
     return "summarize" if first and not all(v["passed"] for v in state["validation"][0].values()) else END
 
 
+def _traced(name: str, node):
+    """The node, timed as a span of the request's trace (a stage of /ask's timeline)."""
+    async def run(state: EngineState) -> dict:
+        with tracing.span("node", name):
+            return await node(state)
+
+    return run
+
+
 def build_engine():
     graph = StateGraph(EngineState)
     for name, node in (("validate", validate_node), ("route", route_node), ("plan", plan_node),
                        ("execute", execute_node), ("replan", replan_node), ("summarize", summarize_node),
                        ("check", check_node)):
-        graph.add_node(name, node)
+        graph.add_node(name, _traced(name, node))
     graph.set_entry_point("validate")
     graph.add_conditional_edges("validate", lambda s: END if s.get("rejection") else "route")
     graph.add_conditional_edges("route", lambda s: END if s["route"] == "small_talk" else "plan")
@@ -293,7 +307,8 @@ engine = build_engine()
 async def answer(question: str, principal) -> dict:
     """Run the engine for one question as `principal`."""
     start = time.perf_counter()
-    with track_usage() as usage:  # tokens per role, for Phase 8's cost tracking
+    trace = tracing.current()
+    with track_usage() as usage:  # tokens per role
         state = await engine.ainvoke({"question": question, "access": principal, "timings": {}, "llm_calls": []})
     plan: Plan | None = state.get("plan")
     calls = state.get("llm_calls", [])
@@ -315,4 +330,8 @@ async def answer(question: str, principal) -> dict:
         "llm_calls_by_role": {role: calls.count(role) for role in dict.fromkeys(calls)},
         "tokens_by_role": usage["tokens_per_role"],
         "timings": {**state.get("timings", {}), "total_ms": _ms(start)},
+        # The stages as they ran, for a UI's progress display (when traced).
+        "timeline": trace.timeline() if trace else [],
+        "trace_id": trace.trace_id if trace else None,
+        "question": state.get("question", ""),  # as the engine saw it: redacted
     }
