@@ -17,6 +17,8 @@ PROTECTED = [
     ("post", "/feedback", {"json": {"query_id": 1, "thumbs_up": True}}),
     ("get", "/admin/logs", {}),
     ("get", "/admin/stats", {}),
+    ("get", "/admin/traces", {}),
+    ("get", "/admin/traces/{trace_id}", {}),
 ]
 
 
@@ -37,7 +39,8 @@ def _as(uid):
 
 
 def _call(client, method, path, kwargs, headers):
-    return getattr(client, method)(path.format(doc_id="d"), headers=headers, **kwargs)
+    path = path.format(doc_id="d", trace_id="00000000-0000-0000-0000-000000000000")
+    return getattr(client, method)(path, headers=headers, **kwargs)
 
 
 def test_every_route_but_me_and_health_requires_a_principal():
