@@ -7,6 +7,7 @@ import sqlalchemy as sa
 
 from ingestion.chunking import chunk_blocks
 from ingestion.parse import parse_markdown
+from db.access import Access
 from ingestion.store import Filters
 from tests.integration.test_corpus_load import ADMIN, _one, _store
 
@@ -101,13 +102,16 @@ async def test_full_text_ranks_the_overdraft_cushion_row_first(pg_url, app_url):
     assert first.filename == "fee-schedule-2026.md" and "overdraft cushion" in first.text.lower()
 
 
-async def test_a_hybrid_search_is_two_statements(pg_url, app_url):
-    """One for the access context (and the scan setting), one for all three
-    legs: from far away every round trip costs about 100 ms."""
+async def test_a_hybrid_search_is_one_round_trip_under_rls(pg_url, app_url):
+    """The access context (with the scan setting) and all three legs go as one
+    query string: from far away every round trip costs about 100 ms. RLS
+    still applies: another org's caller gets nothing."""
     store = _store(pg_url, app_url)
     await _load(store)
     sent = []
     sa.event.listen(store._engine, "before_cursor_execute",
                     lambda conn, cursor, statement, *args: sent.append(statement))
     hits = await store.scoped(ADMIN).search(ABROAD)
-    assert hits and len(sent) == 2
+    assert hits and len(sent) == 1
+    other_org = Access(org_id="another-org", clearance=2)  # sees none of this org's documents
+    assert await store.scoped(other_org).search(ABROAD, filters=Filters(all_versions=True)) == []

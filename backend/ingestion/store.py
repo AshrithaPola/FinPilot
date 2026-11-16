@@ -56,7 +56,7 @@ from datetime import date
 import sqlalchemy as sa
 
 from config import Settings
-from db.access import WRITER_ROLES, Access, set_access  # noqa: F401  (Access re-exported)
+from db.access import WRITER_ROLES, Access, access_statement, set_access  # noqa: F401  (Access re-exported)
 from embeddings import EmbeddingProvider
 from ingestion.chunking import Chunk, tokens
 from ingestion.rerank import Reranker
@@ -271,12 +271,16 @@ _SPARSE_SQL = f"""
 """
 _SPARSE = sa.text(_SPARSE_SQL)
 
-# Hybrid mode: the three legs in one statement, one round trip (each was
-# its own before; from far away, every round trip cost about 100 ms). Each
-# branch numbers its own rows, so the legs stay separate rankings for RRF.
-_HYBRID = sa.text(f"""
+# The legs as one statement: one round trip (each was its own before; from
+# far away, every round trip cost about 100 ms). Each branch numbers its own
+# rows, so the legs stay separate rankings for RRF.
+_DENSE_LEG = f"""
     SELECT 'dense' AS leg, row_number() OVER (ORDER BY distance) AS rank, {_COLUMNS}, distance
     FROM ({_nearest("embedding")}) AS dense
+"""
+_DENSE_RANKED = sa.text(_DENSE_LEG)
+_HYBRID = sa.text(f"""
+    {_DENSE_LEG}
     UNION ALL
     SELECT 'questions', row_number() OVER (ORDER BY distance), {_COLUMNS}, distance
     FROM ({_nearest("question_embedding")}) AS questions
@@ -577,16 +581,21 @@ class HybridStore:
                   **(filters or Filters()).params()}
         vector = {**params, "query_vector": _vector_literal(query_vector)}
         hybrid = self._settings.retrieval_mode == "hybrid"
+        statement, values = (_HYBRID, {**vector, "query": query}) if hybrid else (_DENSE_RANKED, vector)
         # Every leg runs under the RLS policy: the access check is a filter on
         # each row's own columns, which iterative scans handle like doc_id.
-        # Two statements: the access context (with the scan setting), then
-        # the legs; the context must be set before the policies read it.
-        with self._begin({"hnsw.iterative_scan": "relaxed_order"}) as conn:
-            if hybrid:
-                rows = conn.execute(_HYBRID, {**vector, "query": query}).mappings().all()
-            else:
-                rows = [{**r, "leg": "dense", "rank": rank}
-                        for rank, r in enumerate(conn.execute(_DENSE, vector).mappings().all(), start=1)]
+        # One round trip: the access context (with the scan setting) and the
+        # legs go as one query string. Postgres runs its statements in order,
+        # in this transaction, so the policies see the context. That needs
+        # psycopg2, which fills in parameters client-side; a driver that binds
+        # them on the server refuses several statements outright (an error,
+        # never an unscoped query).
+        with self._engine.begin() as conn:
+            if self._access is not None:
+                context, context_values = access_statement(self._access, {"hnsw.iterative_scan": "relaxed_order"})
+                statement = sa.text(f"{context.text.rstrip()};\n{statement.text}")
+                values = {**context_values, **values}
+            rows = conn.execute(statement, values).mappings().all()
         legs: dict[str, dict] = {"dense": {}, "sparse": {}, "questions": {}}
         for r in rows:
             if r["leg"] == "dense":

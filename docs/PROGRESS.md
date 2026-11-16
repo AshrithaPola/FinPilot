@@ -5,7 +5,7 @@ The plan, the architecture checklist and the commit budget are in
 enterprise build, its eval baselines and decisions) is in git history: see
 `docs/PROGRESS.md` at commit 51ba57a.
 
-**Commits: 17 of 25** (budget raised to 24 on 2026-11-14 for Phase 4's two extra commits, then to 25 the same day so the accounts tools and the market tools each get their own commit; commit 17 fixed a test of mine that CI caught, so the plan is now one commit over: 8 left for 9 planned) (budget decided 2026-11-13; the Compose-name chore is outside it).
+**Commits: 18 of 26** (budget raised to 24 and then 25 on 2026-11-14, and to 26 on 2026-11-16 after commit 17 fixed a test of mine that CI caught; 8 left for Phases 6 to 12, no spare) (budget decided 2026-11-13; the Compose-name chore is outside it).
 
 ## Chores outside the phase budget
 
@@ -429,7 +429,8 @@ finpilot_app's.
 |---|---|---|
 | 1 | `9046cf3` | Public sources (SEC 10-K Items 1A and 7, ETF summary prospectuses, CFPB answers): fetched with `SEC_USER_AGENT`, cached outside git, chunked and loaded like the bank's documents; paced embedding in both loaders |
 | 2 | `a58e235` | Accounts tools (read-only, parameterized, under the customer's RLS context) with adversarial tests; search legs in one SQL statement |
-| fix | this commit | A hostile-argument test meant to pass validation used `or_1_eq_1`, which the category rule (letters and underscores) rightly refuses; now `or_one_eq_one` (CI caught it) |
+| fix | `028e2ed` | A hostile-argument test meant to pass validation used `or_1_eq_1`, which the category rule (letters and underscores) rightly refuses; now `or_one_eq_one` (CI caught it) |
+| 3 | this commit | Balances (starting balances in the generator, `get_balance`); market tools (prices, SEC financials, FRED rates) and the calculator; search in one round trip |
 
 ### Notes
 
@@ -535,6 +536,64 @@ finpilot_app's.
   it's gitignored now, and loading from it will be added once the pages
   are saved there (with a SOURCES.md note that they were saved by hand
   from a browser).
+
+### Notes (commit 3)
+
+- **Balances.** Each account now has a starting balance on 2025-07-01
+  (migration 0013): checking gets the generator's own simulated opening
+  balance, so the stored balance matches its simulation; savings and the
+  card get amounts drawn from a stream of their own (per customer), so no
+  other generated row changed (checked: identical output apart from the
+  two new fields, receipts included). `get_balance` (same four layers as
+  the other accounts tools) returns starting balance + transactions - fees
+  not waived, in integer cents, as of the account's last activity. Across
+  the 50 customers: checking -$263 to $10,892 (median $3,236), savings
+  $289 to $73,569 (median $10,970), cards owing $304 to $1,801. Known
+  gap: the data has no card payments, so card balances only grow;
+  adding payments would change checking balances and overdrafts.
+  Synthetic data reloaded on Neon (about 30 s).
+- **Market tools** (`tools/market.py`, any signed-in caller, read-only):
+  `get_price` (on or before a date, with date and source),
+  `get_price_history`, `get_company_financials` (AAPL, MSFT, KO: revenue,
+  net income, operating income, diluted EPS, operating cash flow, total
+  assets, equity), `get_rate` (DPRIME, DFF, DGS10). Every row carries its
+  attribution: "Prices: Alpha Vantage" or "Synthetic demo price (not a
+  market price)", the 10-K's form, date and accession number, FRED's
+  required notice. The tools only read the database;
+  `python -m bank.market fetch sec|prices|rates` fills it (as the owner).
+  Two new public tables, `company_facts` and `rate_observations`: no
+  customer or clearance column, so no RLS; the app role reads them only
+  (a test checks writes are refused).
+- **What's fetched.** SEC company facts (data.sec.gov, `SEC_USER_AGENT`):
+  105 rows on Neon, 3 companies x 7 metrics x 5 fiscal years; annual 10-K
+  figures only, the latest filing for each year (later 10-Ks repeat
+  earlier years), durations of about a year so quarters don't slip in.
+  **Not fetched:** real prices and FRED rates; `.env` has no
+  `ALPHA_VANTAGE_API_KEY` or `FRED_API_KEY` (both free). Until then
+  `get_price` returns the synthetic prices, labelled as such, and
+  `get_rate` returns nothing.
+- **Calculator** (`tools/calculator.py`): `afford`, `total`, `interest`
+  (simple or daily compounding), `percent_change`, `market_value`, `gain`.
+  Decimal, money rounded half-up to the cent, inputs bounded, every result
+  with its formula. It reproduces the deposit agreement's worked example
+  ($10,000 at 3.54% for 30 days: $29.14). On Neon, customer 1 can spend
+  $1,200 and keep $1,614.39 in checking, above a $500 floor.
+- **Search in one round trip** (your suggestion). The access context and
+  the legs now go as one query string; Postgres runs its statements in
+  order in the transaction, so RLS sees the context. It relies on
+  psycopg2 filling in parameters client-side; a driver that binds on the
+  server refuses several statements (an error, never an unscoped query).
+  Checked on the branch: same fused ranking on 12 of 12 queries; a
+  customer sees none of the 6 staff-memo chunks staff see; an unscoped
+  store sees nothing. A Postgres test pins a hybrid search to one
+  statement and checks another org gets nothing. Effective round trips per
+  search: about 4.2 before, 2.7 now (the rest are the pool's pre-ping and
+  the COMMIT); hybrid end to end 202 ms today (round trip 73 ms; 422 ms
+  last time at about 100 ms).
+- **Public load finished** after the quota reset: 9 public documents, 326
+  chunks, 0 metadata calls (cached); Neon main now holds 22 documents, 440
+  chunks, every one with its question vector. The leakage check on main
+  is clean.
 
 ## Phase 10 notes (from 2026-11-14)
 

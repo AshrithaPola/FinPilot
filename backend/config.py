@@ -71,6 +71,9 @@ class Settings(BaseSettings):
     # EDGAR requires a User-Agent naming a contact: "FinPilot research project
     # <name> <email>". In .env only, never committed.
     sec_user_agent: str | None = None
+    # Market data (bank/market.py): free keys, in .env only.
+    alpha_vantage_api_key: str | None = None
+    fred_api_key: str | None = None
 
     # --- Auth (auth.py) ---
     # Firebase project whose ID tokens are accepted. The service account key

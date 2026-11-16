@@ -133,20 +133,30 @@ def generate(seed: int = 7, customers: int = 50) -> dict[str, list[dict]]:
             "customer_id": cid, "org_id": BANK_ORG, "segment": segment,
             "full_name": f"{rng.choice(FIRST)} {rng.choice(LAST)}",
             "joined_on": START - timedelta(days=rng.randint(30, 3000))})
-        _customer_rows(rng, cid, segment, out, prices)
+        _customer_rows(rng, cid, segment, out, prices, random.Random(f"{seed}:{cid}:start"))
     return out
 
 
-def _customer_rows(rng, cid, segment, out, last_prices) -> None:
+def _customer_rows(rng, cid, segment, out, last_prices, start_rng) -> None:
+    """One customer's rows. Starting balances (on START) come from
+    `start_rng`, a stream of their own, so adding them changed no other row
+    (and none of the receipts drawn from these transactions)."""
     opened = START - timedelta(days=rng.randint(30, 900))
     checking, savings, credit = f"{cid}-chk", f"{cid}-sav", f"{cid}-cc"
     accounts = [(checking, "checking", "Everyday Checking"), (savings, "savings", "High-Yield Savings"),
                 (credit, "credit", "Cash Back Card")]
     if segment == "premier":
         accounts.append((f"{cid}-brk", "brokerage", "Self-Directed Investing"))
+    savings_range = {"retail": (500, 8000), "premier": (10000, 60000), "student": (50, 1500)}[segment]
+    starting = {savings: _cents(start_rng, *savings_range),
+                credit: -_cents(start_rng, 0, 900),  # owed on the card
+                f"{cid}-brk": 0}  # cash; the holdings are valued by the market tools
+    rows = {}
     for account_id, kind, product in accounts:
-        out["accounts"].append({"account_id": account_id, "customer_id": cid, "type": kind,
-                                "product": product, "opened_on": opened, "status": "open"})
+        rows[account_id] = {"account_id": account_id, "customer_id": cid, "type": kind, "product": product,
+                            "opened_on": opened, "status": "open",
+                            "starting_balance_cents": starting.get(account_id, 0), "starting_balance_on": START}
+        out["accounts"].append(rows[account_id])
     debit_card, credit_card = f"{cid}-dc", f"{cid}-cc1"
     for card_id, account_id, network in ((debit_card, checking, "visa"),
                                          (credit_card, credit, "mastercard")):
@@ -173,6 +183,7 @@ def _customer_rows(rng, cid, segment, out, last_prices) -> None:
     paycheck = _cents(rng, *pay)
     rent = int(paycheck * rng.uniform(0.6, 0.9))
     balance = _cents(rng, 200, 3000) if segment != "premier" else _cents(rng, 4000, 15000)
+    rows[checking]["starting_balance_cents"] = balance  # what the simulation below starts from
     # Card spending is a share of what pay leaves after rent, so most months end
     # ahead and overdrafts are occasional (a big week before payday), not chronic.
     spend_share = {"retail": SPEND_SHARE, "premier": SPEND_SHARE - 0.15, "student": SPEND_SHARE + 0.05}[segment]

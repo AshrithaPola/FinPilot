@@ -12,7 +12,7 @@ from tools.accounts import AccountsTools, ToolError, read_only
 
 ME = Access(org_id=synthetic.BANK_ORG, clearance=0, customer_id="cust-0001")
 OTHER = Access(org_id=synthetic.BANK_ORG, clearance=0, customer_id="cust-0002")
-EVERY_TOOL = ["list_accounts", "list_cards", "list_transactions", "list_fees", "list_holdings"]
+EVERY_TOOL = ["list_accounts", "get_balance", "list_cards", "list_transactions", "list_fees", "list_holdings"]
 OWNED = ["accounts", "cards", "transactions", "fees", "holdings"]
 
 
@@ -77,3 +77,23 @@ def test_a_write_fails_twice_over(setup, app_url):
             conn.execute(update)
     with owner.connect() as conn:
         assert conn.execute(sa.text("SELECT count(*) FROM accounts WHERE status = 'closed'")).scalar() == 0
+
+
+def test_balances_are_starting_balance_plus_transactions_minus_fees(setup):
+    tools, _ = setup
+    data = synthetic.generate(customers=3)  # what setup loaded
+    expected = {a["account_id"]: a["starting_balance_cents"] for a in data["accounts"]
+                if a["customer_id"] == ME.customer_id}
+    for t in data["transactions"]:
+        if t["account_id"] in expected:
+            expected[t["account_id"]] += t["amount_cents"]
+    for f in data["fees"]:
+        if f["account_id"] in expected and not f["waived"]:
+            expected[f["account_id"]] -= f["amount_cents"]
+    got = {r["account_id"]: r["balance_cents"] for r in tools.call(ME, "get_balance")}
+    assert got == expected and all(isinstance(v, int) for v in got.values())
+    [checking] = tools.call(ME, "get_balance", {"account_id": "cust-0001-chk"})
+    last = max([t["posted_on"] for t in data["transactions"] if t["account_id"] == "cust-0001-chk"]
+               + [f["assessed_on"] for f in data["fees"] if f["account_id"] == "cust-0001-chk"])
+    assert checking["as_of"] == last.isoformat() and checking["starting_balance_on"] == "2025-07-01"
+    assert tools.call(ME, "get_balance", {"account_id": "cust-0002-chk"}) == []  # exists, isn't ours

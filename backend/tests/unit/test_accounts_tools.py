@@ -21,11 +21,14 @@ def test_only_a_customer_can_call(principal):
 def test_there_is_no_tool_but_the_read_tools(name):
     with pytest.raises(ToolError, match="No such tool"):
         tools.call(CUSTOMER, name)
-    assert set(TOOLS) == {"list_accounts", "list_cards", "list_transactions", "list_fees", "list_holdings"}
+    assert set(TOOLS) == {"list_accounts", "get_balance", "list_cards", "list_transactions", "list_fees",
+                          "list_holdings"}  # all read-only
 
 
 @pytest.mark.parametrize("name, arguments", [
     ("list_accounts", {"customer_id": "cust-0002"}),          # the caller can't pick the customer
+    ("get_balance", {"customer_id": "cust-0002"}),
+    ("get_balance", {"account_id": "cust-0002-chk' UNION SELECT * FROM accounts --"}),
     ("list_transactions", {"customer_id": "cust-0002", "account_id": "cust-0002-chk"}),
     ("list_transactions", {"account_id": "cust-0001-chk' OR '1'='1"}),
     ("list_transactions", {"account_id": "x; DROP TABLE transactions"}),

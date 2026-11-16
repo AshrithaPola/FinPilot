@@ -33,6 +33,19 @@ _SET_ACCESS = sa.text("""
 """)
 
 
+def access_statement(access, extra: dict[str, str] | None = None) -> tuple[sa.TextClause, dict]:
+    """The statement set_access runs, and its parameters: the access context,
+    plus any `extra` transaction-local settings in the same statement."""
+    params = {"org_id": access.org_id, "clearance": access.clearance, "team_ids": list(access.team_ids),
+              "customer_id": getattr(access, "customer_id", None) or ""}
+    if not extra:
+        return _SET_ACCESS, params
+    for i, (name, value) in enumerate(extra.items()):
+        params |= {f"extra_name{i}": name, f"extra_value{i}": value}
+    return sa.text(_SET_ACCESS.text.rstrip() + "".join(
+        f", set_config(:extra_name{i}, :extra_value{i}, true)" for i in range(len(extra)))), params
+
+
 def set_access(conn, access, extra: dict[str, str] | None = None) -> None:
     """Bind this transaction (a Connection or Session) to `access`: anything
     with org_id, clearance and team_ids (and optionally customer_id; none
@@ -44,12 +57,4 @@ def set_access(conn, access, extra: dict[str, str] | None = None) -> None:
     dialect = conn.get_bind().dialect if hasattr(conn, "get_bind") else conn.dialect
     if dialect.name != "postgresql":
         return
-    params = {"org_id": access.org_id, "clearance": access.clearance, "team_ids": list(access.team_ids),
-              "customer_id": getattr(access, "customer_id", None) or ""}
-    statement = _SET_ACCESS
-    if extra:
-        statement = sa.text(_SET_ACCESS.text.rstrip() + "".join(
-            f", set_config(:extra_name{i}, :extra_value{i}, true)" for i in range(len(extra))))
-        for i, (name, value) in enumerate(extra.items()):
-            params |= {f"extra_name{i}": name, f"extra_value{i}": value}
-    conn.execute(statement, params)
+    conn.execute(*access_statement(access, extra))

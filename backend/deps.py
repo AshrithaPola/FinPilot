@@ -45,3 +45,11 @@ def get_token_checker():
     from auth import FirebaseTokenChecker  # auth imports this module
 
     return FirebaseTokenChecker(get_settings())
+
+
+@lru_cache
+def get_market_tools():
+    """The market tools, on the store's connection (read-only reference data)."""
+    from tools.market import MarketTools
+
+    return MarketTools(get_store().engine)

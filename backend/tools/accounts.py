@@ -18,19 +18,20 @@ Each layer below would stop a cross-customer read on its own:
     returns nothing, the same as an id that doesn't exist, so nothing leaks
     about other customers.
 
-Money is integer cents (negative = money out); quantities are strings, so
-no float rounding. There are no balances: the data holds no opening
-balances, so a total would be invented; arithmetic is the calculator's job.
+Money is integer cents (negative = money out, or owed on a card);
+quantities are strings, so no float rounding. A balance is the account's
+starting balance plus its transactions minus its fees that weren't waived,
+as of its last posted activity; other arithmetic is the calculator's job.
 """
-from contextlib import contextmanager
-from dataclasses import dataclass
 from datetime import date
-from typing import Annotated, Callable, Literal
+from typing import Annotated, Literal
 
 import sqlalchemy as sa
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import Field, model_validator
 
-from db.access import set_access
+from tools.common import Args, NoArgs, Tool, ToolError, read_only, rows, validate
+
+__all__ = ["TOOLS", "AccountsTools", "ToolError", "read_only"]
 
 Id = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")]
 Limit = Annotated[int, Field(ge=1, le=200)]
@@ -38,19 +39,11 @@ FeeType = Literal["overdraft", "nsf", "monthly_maintenance", "atm", "foreign_tra
                   "late_payment"]
 
 
-class ToolError(Exception):
-    """A refused call: the message is safe to show (it names no other customer's data)."""
+class BalanceArgs(Args):
+    account_id: Id | None = None
 
 
-class _Args(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-
-class NoArgs(_Args):
-    pass
-
-
-class _Period(_Args):
+class _Period(Args):
     account_id: Id | None = None
     start: date | None = None
     end: date | None = None
@@ -72,26 +65,18 @@ class FeeArgs(_Period):
     include_waived: bool = True
 
 
-def _rows(conn, sql: str, params: dict | None = None) -> list[dict]:
-    out = []
-    for row in conn.execute(sa.text(sql), params or {}).mappings():
-        out.append({k: v.isoformat() if isinstance(v, date) else str(v) if k == "quantity" else v
-                    for k, v in row.items()})
-    return out
-
-
 def _accounts(conn, args: NoArgs) -> list[dict]:
-    return _rows(conn, "SELECT account_id, type, product, opened_on, status FROM accounts "
+    return rows(conn, "SELECT account_id, type, product, opened_on, status FROM accounts "
                        "ORDER BY opened_on, account_id")
 
 
 def _cards(conn, args: NoArgs) -> list[dict]:
-    return _rows(conn, "SELECT card_id, account_id, last4, network, status, expires_on FROM cards "
+    return rows(conn, "SELECT card_id, account_id, last4, network, status, expires_on FROM cards "
                        "ORDER BY card_id")
 
 
 def _transactions(conn, args: TransactionArgs) -> list[dict]:
-    return _rows(conn, """
+    return rows(conn, """
         SELECT txn_id, account_id, card_id, posted_on, amount_cents, merchant, category, description
         FROM transactions
         WHERE (CAST(:account_id AS text) IS NULL OR account_id = :account_id)
@@ -104,7 +89,7 @@ def _transactions(conn, args: TransactionArgs) -> list[dict]:
 
 
 def _fees(conn, args: FeeArgs) -> list[dict]:
-    return _rows(conn, """
+    return rows(conn, """
         SELECT fee_id, account_id, txn_id, fee_type, amount_cents, assessed_on, waived
         FROM fees
         WHERE (CAST(:account_id AS text) IS NULL OR account_id = :account_id)
@@ -117,24 +102,37 @@ def _fees(conn, args: FeeArgs) -> list[dict]:
     """, args.model_dump())
 
 
+def _balance(conn, args: BalanceArgs) -> list[dict]:
+    return rows(conn, """
+        SELECT a.account_id, a.type, a.product,
+               CAST(a.starting_balance_cents + coalesce(t.total, 0) - coalesce(f.total, 0) AS bigint)
+                   AS balance_cents,  -- sum() of bigint is numeric; cents stay integers
+               greatest(a.starting_balance_on, t.last, f.last) AS as_of,
+               a.starting_balance_cents, a.starting_balance_on
+        FROM accounts a
+        LEFT JOIN (SELECT account_id, sum(amount_cents) AS total, max(posted_on) AS last
+                   FROM transactions GROUP BY account_id) t USING (account_id)
+        LEFT JOIN (SELECT account_id, sum(amount_cents) FILTER (WHERE NOT waived) AS total,
+                          max(assessed_on) AS last
+                   FROM fees GROUP BY account_id) f USING (account_id)
+        WHERE CAST(:account_id AS text) IS NULL OR a.account_id = :account_id
+        ORDER BY a.account_id
+    """, args.model_dump())
+
+
 def _holdings(conn, args: NoArgs) -> list[dict]:
-    return _rows(conn, """
+    return rows(conn, """
         SELECT h.account_id, h.symbol, s.name, s.type, h.quantity, h.cost_basis_cents
         FROM holdings h JOIN securities s USING (symbol)
         ORDER BY h.account_id, h.symbol
     """)
 
 
-@dataclass(frozen=True)
-class Tool:
-    name: str
-    description: str  # for the planner (Phase 6)
-    args: type[_Args]
-    run: Callable
-
-
 TOOLS = {t.name: t for t in (
     Tool("list_accounts", "The customer's accounts: type, product, opened date, status.", NoArgs, _accounts),
+    Tool("get_balance", "Current balance of each of the customer's accounts (or one account_id), "
+         "in cents, as of its last posted activity; negative means overdrawn, or owed on a card.",
+         BalanceArgs, _balance),
     Tool("list_cards", "The customer's cards: last 4 digits, network, status, expiry.", NoArgs, _cards),
     Tool("list_transactions", "The customer's transactions, newest first; optional account, date "
          "range (start, end), category and limit (at most 200).", TransactionArgs, _transactions),
@@ -155,24 +153,6 @@ class AccountsTools:
     def call(self, principal, name: str, arguments: dict | None = None) -> list[dict]:
         if principal is None or not getattr(principal, "customer_id", None):
             raise ToolError("Account tools are only for signed-in bank customers.")
-        tool = TOOLS.get(name)
-        if tool is None:
-            raise ToolError(f"No such tool: {name!r}.")
-        try:
-            args = tool.args.model_validate(arguments or {})
-        except ValidationError as exc:
-            problems = "; ".join(f"{'.'.join(map(str, e['loc'])) or 'arguments'}: {e['msg']}"
-                                 for e in exc.errors())
-            raise ToolError(f"Invalid arguments for {name}: {problems}") from None
+        tool, args = validate(TOOLS, name, arguments)
         with read_only(self._engine, principal) as conn:
             return tool.run(conn, args)
-
-
-@contextmanager
-def read_only(engine: sa.Engine, principal):
-    """A READ ONLY transaction bound to the caller: a write fails in Postgres
-    even if a tool ever tried one."""
-    with engine.begin() as conn:
-        conn.execute(sa.text("SET TRANSACTION READ ONLY"))  # must come before any query
-        set_access(conn, principal)
-        yield conn

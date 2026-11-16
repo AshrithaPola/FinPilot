@@ -121,7 +121,8 @@ is ticked only when its code is merged and tested.
 | Spare | 2 | Fixes found late (both used: Phase 0, Phase 3) |
 | 4, added | 2 | Retrieval options (filters, question index, rerank, parent expansion); Neon branching experiment. Budget raised to 24 on 2026-11-14 |
 | 5, split | 1 | The accounts tools and the market tools get a commit each (budget 25, 2026-11-14) |
-| **Total** | **25** | No spare |
+| Fix | 1 | A test fix CI caught (Phase 5) |
+| **Total** | **26** | No spare (budget 26 on 2026-11-16) |
 
 The full architecture needs **two more commits** than the original 20
 (Phase 3 grows from 2 to 3 for restructuring and vision; Phase 4 from 1 to 2
