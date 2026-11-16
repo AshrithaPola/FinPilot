@@ -50,12 +50,13 @@ def test_money_is_whole_cents_and_never_zero(data):
 
 
 def test_fees_follow_the_schedule_in_force_on_their_date(data):
-    by_type = {"overdraft": "overdraft", "atm": "atm_out_of_network",
-               "monthly_maintenance": "maintenance", "late_payment": "late_payment"}
+    by_type = {"overdraft": "overdraft", "atm": "atm_out_of_network", "monthly_maintenance": "maintenance"}
     for f in data["fees"]:
         if f["fee_type"] in by_type:
             expected = getattr(schedule_on(f["assessed_on"]), by_type[f["fee_type"]])
             assert f["amount_cents"] == expected, f
+        elif f["fee_type"] == "late_payment":  # "up to" the schedule's fee, never more than the minimum due
+            assert 0 < f["amount_cents"] <= schedule_on(f["assessed_on"]).late_payment, f
     assert {schedule_on(f["assessed_on"]) for f in data["fees"]} == set(FEE_SCHEDULES.values())
 
 
@@ -100,3 +101,25 @@ def test_overdrafts_are_occasional_and_happen_under_both_schedules(data):
     assert 0.2 <= len(per_customer) / len(data["customers"]) <= 0.8
     assert median(per_customer.values()) <= 6
     assert {f["assessed_on"] >= SCHEDULE_CHANGE for f in overdrafts} == {True, False}
+
+
+def test_cards_are_paid_by_autopay_and_some_customers_pay_late(data):
+    """Each statement is paid in full on the 25th by autopay from checking, or
+    late by hand; late payments cost a late fee, under both fee schedules."""
+    payments = [t for t in data["transactions"] if t["category"] == "payment"]
+    debits = {(t["customer_id"], t["posted_on"], -t["amount_cents"])
+              for t in data["transactions"] if t["category"] == "card_payment"}
+    assert payments and all((p["customer_id"], p["posted_on"], p["amount_cents"]) in debits for p in payments)
+    on_time = [p for p in payments if p["posted_on"].day == 25]
+    assert len(on_time) > 0.8 * len(payments)
+    late = [f for f in data["fees"] if f["fee_type"] == "late_payment"]
+    assert 0 < len({f["customer_id"] for f in late}) <= 0.4 * len(data["customers"])  # about 15%, small sample
+    assert {schedule_on(f["assessed_on"]) for f in late} == set(FEE_SCHEDULES.values())
+    owed = {a["account_id"]: a["starting_balance_cents"] for a in data["accounts"] if a["type"] == "credit"}
+    for t in data["transactions"]:
+        if t["account_id"] in owed:
+            owed[t["account_id"]] += t["amount_cents"]
+    for f in data["fees"]:
+        if f["account_id"] in owed and not f["waived"]:
+            owed[f["account_id"]] -= f["amount_cents"]
+    assert all(v <= 0 for v in owed.values())  # a card is never in credit: payments never exceed what's owed

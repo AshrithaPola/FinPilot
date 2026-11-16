@@ -5,7 +5,7 @@ The plan, the architecture checklist and the commit budget are in
 enterprise build, its eval baselines and decisions) is in git history: see
 `docs/PROGRESS.md` at commit 51ba57a.
 
-**Commits: 19 of 26** (budget raised to 24 and then 25 on 2026-11-14, and to 26 on 2026-11-16 after commit 17 fixed a test of mine that CI caught; commit 19 fixed another, so the plan is one over again: 7 left for the 8 of Phases 6 to 12) (budget decided 2026-11-13; the Compose-name chore is outside it).
+**Commits: 20 of 28** (budget raised to 24 and then 25 on 2026-11-14, to 26 on 2026-11-16, and to 28 the same day: clean commits matter more than the count) (budget decided 2026-11-13; the Compose-name chore is outside it).
 
 ## Chores outside the phase budget
 
@@ -431,7 +431,8 @@ finpilot_app's.
 | 2 | `a58e235` | Accounts tools (read-only, parameterized, under the customer's RLS context) with adversarial tests; search legs in one SQL statement |
 | fix | `028e2ed` | A hostile-argument test meant to pass validation used `or_1_eq_1`, which the category rule (letters and underscores) rightly refuses; now `or_one_eq_one` (CI caught it) |
 | 3 | `0c889ba` | Balances (starting balances in the generator, `get_balance`); market tools (prices, SEC financials, FRED rates) and the calculator; search in one round trip |
-| fix | this commit | The schema test listed every raw-SQL table by hand and failed on 0013's two new ones (the same trap as Phase 1); it now ignores any table the ORM doesn't define, and still catches drift in the log tables (CI caught it) |
+| fix | `33a4d1c` | The schema test listed every raw-SQL table by hand and failed on 0013's two new ones (the same trap as Phase 1); it now ignores any table the ORM doesn't define, and still catches drift in the log tables (CI caught it) |
+| data | this commit | Card autopay from checking, late payers and late fees, card spending inside the budget; receipts re-rendered |
 
 ### Notes
 
@@ -596,11 +597,51 @@ finpilot_app's.
   chunks, every one with its question vector. The leakage check on main
   is clean.
 
+### Notes (card data, before Phase 6)
+
+- **Autopay** (your call, 2026-11-16; checking balances and overdrafts
+  were allowed to change). As the cardmember agreement says: a cycle closes
+  at month end, payment is due on the 25th of the next month, and autopay
+  pays the statement balance from checking (a debit like any other, so it
+  can overdraw). About one customer in seven sometimes misses autopay and
+  pays by hand 3 to 12 days late; a late fee follows the day after the due
+  date, under the schedule in force, never more than the minimum payment
+  (the greater of $25.00 or 1%). The old random 5% late fee, with no
+  lateness behind it, is gone. The card's balance is charges minus
+  payments (plus its fees), so `get_balance` needed no change.
+- **Card use.** Purchases were on 2% of days (about 7 a year), so most
+  cards owed nothing; now about 1 day in 7 (about 55 a year), with foreign
+  merchants 1 purchase in 20. Card spending comes out of the same budget as
+  debit spending: without that, overdrafts became chronic (median 32 a year
+  in a test sample).
+- **Result** (seed 7, 50 customers): 26,529 transactions, 703 fees, 569 card
+  payments (median $288.77). Balances: checking -$966 to $15,424 (median
+  $3,452), savings $689 to $96,860 (median $10,876), cards owing $11 to $944
+  (median $272). Overdrafts stay occasional: 28 customers, median 3 a year,
+  one at 33. **Late fees: 49, for 12 customers, 30 under the 2025 schedule
+  and 19 under 2026**; all $25.00, because every statement's minimum payment
+  was $25.00, which caps the fee below the schedule's $39 or $40.
+- **Receipts** come from these transactions, so the 10 PNGs were rendered
+  again, and the synthetic loader now deletes a customer's receipt
+  extractions when it replaces their transactions (they described
+  transactions that no longer exist). Reloaded on Neon and the vision pass
+  rerun (10 calls): merchant 10/10, amount 10/10, card last 4 10/10,
+  **date 8/10**. Both misses swap day and month ("01/02/2026" read as
+  1 February): the old receipts' dates happened to be unambiguous. See the
+  Phase 10 notes.
+- **Leakage check on main: clean** after the reload.
+- **Not done:** real prices and FRED rates. `ALPHA_VANTAGE_API_KEY` and
+  `FRED_API_KEY` aren't in `.env` (it was last saved on 2026-11-14).
+
 ## Phase 10 notes (from 2026-11-14)
 
 - **Reranker and tables.** The cross-encoder demoted table-row chunks
   (the APY table and the "Overdraft cushion" row fell to rank 4 in the
   branch experiment): test skipping the rerank for table chunks.
+- **Ambiguous receipt dates.** "01/02/2026" is 2 January in the US and was
+  read as 1 February (2 of 10 dates after the card-data change). Test the
+  harder receipts with dates whose day is 12 or less, and tell the reader
+  the receipts are US-format, or render ISO dates.
 - **Harder receipts.** Add 5 receipt images that are blurred, rotated and
   low-contrast, so the vision accuracy claim (10/10 per field) isn't
   measured on clean renders only.

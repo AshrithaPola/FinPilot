@@ -87,6 +87,7 @@ SPEND_SHARE = 0.75
 SUBSCRIPTIONS = [("StreamBox", 10, 18), ("CloudLocker Storage", 3, 10), ("TuneWave Music", 11, 17),
                  ("FitLoop Gym", 25, 55)]
 FOREIGN_MERCHANTS = [("Café Lumière Paris", "travel", 15, 120), ("Kyoto Rail Pass", "travel", 60, 300)]
+CARD_PURCHASE_ODDS = 0.15  # a card purchase on about 1 day in 7 (about 55 a year)
 SEGMENTS = (("retail", 0.7), ("premier", 0.15), ("student", 0.15))
 FIRST = ["Avery", "Jordan", "Riley", "Morgan", "Casey", "Quinn", "Rowan", "Sasha", "Devi", "Mateo",
          "Amara", "Leon", "Priya", "Tomas", "Nia", "Kenji"]
@@ -135,6 +136,14 @@ def generate(seed: int = 7, customers: int = 50) -> dict[str, list[dict]]:
             "joined_on": START - timedelta(days=rng.randint(30, 3000))})
         _customer_rows(rng, cid, segment, out, prices, random.Random(f"{seed}:{cid}:start"))
     return out
+
+
+def _statement(rng, due: date, amount: int, late_payer: bool) -> dict:
+    """A card statement: what's due, when, the minimum payment (the greater of
+    $25.00 or 1%, never more than the balance) and whether it's paid late."""
+    late = late_payer and rng.random() < 0.35
+    return {"due": due, "amount": amount, "minimum": min(amount, max(2500, amount // 100)), "late": late,
+            "pay_on": due + timedelta(days=rng.randint(3, 12)) if late else due}
 
 
 def _customer_rows(rng, cid, segment, out, last_prices, start_rng) -> None:
@@ -188,12 +197,21 @@ def _customer_rows(rng, cid, segment, out, last_prices, start_rng) -> None:
     # ahead and overdrafts are occasional (a big week before payday), not chronic.
     spend_share = {"retail": SPEND_SHARE, "premier": SPEND_SHARE - 0.15, "student": SPEND_SHARE + 0.05}[segment]
     per_day = max(0, paycheck * 26 / 12 - rent) * spend_share / 30 / AVERAGE_PURCHASE
+    per_day = max(0.0, per_day - CARD_PURCHASE_ODDS)  # card purchases come out of the same budget
     purchase_odds = min(1.0, per_day / 3)  # up to 3 purchases a day
     deposits_this_month, overdrafts_today, day_seen = 0, 0, None
     cushion = int(paycheck * rng.uniform(0.6, 1.2))  # kept in checking above next month's rent
     subscriptions = [(name, _cents(rng, low, high), rng.randint(1, 28))
                      for name, low, high in rng.sample(SUBSCRIPTIONS, rng.randint(1, 3))]
     txn(START, checking, 100, "interest", f"Statement memo ref {canary(cid)}")
+    # The card (cardmember agreement): a cycle closes at month end, payment is
+    # due on the 25th of the next month, and autopay pays the statement
+    # balance from checking. About one customer in seven sometimes misses
+    # autopay and pays by hand 3 to 12 days late, and is charged a late fee
+    # under the schedule in force (never more than the minimum payment due).
+    late_payer = rng.random() < 0.15
+    card_owed = -rows[credit]["starting_balance_cents"]  # the June statement, due July 25
+    statement = _statement(rng, START.replace(day=25), card_owed, late_payer) if card_owed else None
 
     for day in _days(START, END):
         sched = schedule_on(day)
@@ -211,6 +229,13 @@ def _customer_rows(rng, cid, segment, out, last_prices, start_rng) -> None:
             debits.append((rent, "housing", "Rent payment", "Maple Court Apartments"))
         debits += [(amount, "subscriptions", f"Recurring payment {name}", name)
                    for name, amount, on_day in subscriptions if day.day == on_day]
+        if statement and day == statement["pay_on"]:
+            debits.append((statement["amount"], "card_payment",
+                           "Cash Back Card payment" if statement["late"] else "Cash Back Card autopay", None))
+        if statement and statement["late"] and day == statement["due"] + timedelta(days=1):
+            late_fee = min(sched.late_payment, statement["minimum"])
+            fee(day, credit, "late_payment", late_fee)
+            card_owed += late_fee
         # A debit card is declined once the account is $200 overdrawn.
         purchases = sum(rng.random() < purchase_odds for _ in range(3))
         for _ in range(purchases if balance > -20000 else 0):
@@ -218,8 +243,12 @@ def _customer_rows(rng, cid, segment, out, last_prices, start_rng) -> None:
             debits.append((_cents(rng, low, high), category, f"Card purchase {name}", name))
         for amount, category, description, merchant in debits:
             row = txn(day, checking, -amount, category, description, merchant,
-                      debit_card if category != "housing" else None)
+                      debit_card if category not in ("housing", "card_payment") else None)
             balance -= amount
+            if category == "card_payment":
+                txn(day, credit, amount, "payment", "Payment, thank you")
+                card_owed -= amount
+                statement = None
             # One fee per item that leaves the account overdrawn past the
             # cushion, up to the daily cap.
             if balance < -sched.overdraft_cushion and overdrafts_today < sched.overdraft_max_per_day:
@@ -233,13 +262,15 @@ def _customer_rows(rng, cid, segment, out, last_prices, start_rng) -> None:
             balance -= amount
             fee(day, checking, "atm", sched.atm_out_of_network, row["txn_id"])
             balance -= sched.atm_out_of_network
-        if rng.random() < 0.02:  # credit card purchase, sometimes abroad
-            name, category, low, high = rng.choice(MERCHANTS + FOREIGN_MERCHANTS)
+        if rng.random() < CARD_PURCHASE_ODDS:  # credit card purchase, sometimes abroad
+            name, category, low, high = rng.choice(FOREIGN_MERCHANTS if rng.random() < 0.05 else MERCHANTS)
             amount = _cents(rng, low, high)
             row = txn(day, credit, -amount, category, f"Card purchase {name}", name, credit_card)
+            card_owed += amount
             if (name, category, low, high) in FOREIGN_MERCHANTS:
-                fee(day, credit, "foreign_transaction",
-                    max(1, amount * sched.foreign_transaction_bps // 10_000), row["txn_id"])
+                foreign = max(1, amount * sched.foreign_transaction_bps // 10_000)
+                fee(day, credit, "foreign_transaction", foreign, row["txn_id"])
+                card_owed += foreign
         next_day = day + timedelta(days=1)
         if next_day.month != day.month:  # month end
             # Sweep what's above next month's rent plus a cushion to savings, so
@@ -255,8 +286,8 @@ def _customer_rows(rng, cid, segment, out, last_prices, start_rng) -> None:
                 balance -= sched.maintenance
             elif segment == "student":
                 fee(day, checking, "monthly_maintenance", sched.maintenance, waived=True)
-            if rng.random() < 0.05:
-                fee(day, credit, "late_payment", sched.late_payment)
+            if card_owed > 0 and statement is None:  # the cycle closes: next due on the 25th
+                statement = _statement(rng, next_day.replace(day=25), card_owed, late_payer)
             deposits_this_month = 0
 
     if segment == "premier":
@@ -316,6 +347,9 @@ def load(owner_url: str, data: dict[str, list[dict]]) -> dict[str, int]:
                     ON CONFLICT (customer_id) DO UPDATE SET full_name = EXCLUDED.full_name,
                         segment = EXCLUDED.segment, joined_on = EXCLUDED.joined_on
                 """), customer)
+                # Receipt extractions describe this customer's old transactions;
+                # reloaded ones may differ, so they go too (re-extract after).
+                conn.execute(sa.text("DELETE FROM receipt_images WHERE customer_id = :c"), {"c": cid})
                 for table in reversed(CHILDREN):
                     # Explicit filter: an owner with BYPASSRLS (or a superuser)
                     # isn't limited by the policy.
