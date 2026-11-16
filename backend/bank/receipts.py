@@ -44,7 +44,8 @@ ITEMS = {
 }
 
 SYSTEM = (
-    "You are a receipt reader. From the receipt image, return the merchant name as printed, "
+    "You are a receipt reader. These are US receipts: dates are printed month first, MM/DD/YYYY "
+    "(01/02/2026 is January 2, 2026). From the receipt image, return the merchant name as printed, "
     "the purchase date as YYYY-MM-DD, the total charged as a decimal number (e.g. 23.40), and "
     "the last four digits of the card. Use an empty string for anything you can't read. Report "
     "only what the image shows."
@@ -141,8 +142,9 @@ async def extract(llm, model: str, png: bytes) -> dict:
 
 
 async def extract_all(owner_url: str, llm, model: str, truths: list[dict],
-                      folder: Path = RECEIPTS) -> list[dict]:
-    """Extract and store every receipt not already done with `model`.
+                      folder: Path = RECEIPTS, fresh: bool = False) -> list[dict]:
+    """Extract and store every receipt not already done with `model` (all of
+    them again with `fresh`, e.g. after the prompt changed).
     Returns one result per receipt: truth, fields, matches, cached."""
     import json
 
@@ -161,7 +163,7 @@ async def extract_all(owner_url: str, llm, model: str, truths: list[dict],
                 done = conn.execute(sa.text(
                     "SELECT fields FROM receipt_images WHERE image_id = :i AND model = :m "
                     "AND fields IS NOT NULL"), {"i": image_id, "m": model}).scalar()
-            if done is not None:
+            if done is not None and not fresh:
                 results.append({"truth": truth, "fields": done, "matches": check(truth, done), "cached": True})
                 continue
             fields = await extract(llm, model, png)
@@ -191,6 +193,7 @@ def main() -> int:
     parser.add_argument("--database-url", default=os.environ.get("MIGRATION_DATABASE_URL"),
                         help="Owner Postgres URL, for extract (default: MIGRATION_DATABASE_URL)")
     parser.add_argument("--model", help="Vision model (default: the grading model)")
+    parser.add_argument("--fresh", action="store_true", help="Extract again even if already done")
     args = parser.parse_args()
     truths = pick(generate())
     if args.command == "render":
@@ -207,7 +210,8 @@ def main() -> int:
 
     settings = get_settings()
     model = args.model or settings.grading_model
-    results = asyncio.run(extract_all(args.database_url, build_llm(settings), model, truths))
+    results = asyncio.run(extract_all(args.database_url, build_llm(settings), model, truths,
+                                          fresh=args.fresh))
     for field in ("merchant", "date", "amount_cents", "card_last4"):
         right = sum(r["matches"][field] for r in results)
         print(f"{field:13} {right}/{len(results)}")

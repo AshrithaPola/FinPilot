@@ -17,6 +17,10 @@ class ToolError(Exception):
     """A refused call: the message is safe to show (it names no other customer's data)."""
 
 
+class AccessRefused(ToolError):
+    """The caller may not use this tool at all; asking again another way won't help."""
+
+
 class Args(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

@@ -29,7 +29,7 @@ from typing import Annotated, Literal
 import sqlalchemy as sa
 from pydantic import Field, model_validator
 
-from tools.common import Args, NoArgs, Tool, ToolError, read_only, rows, validate
+from tools.common import AccessRefused, Args, NoArgs, Tool, ToolError, read_only, rows, validate
 
 __all__ = ["TOOLS", "AccountsTools", "ToolError", "read_only"]
 
@@ -160,7 +160,7 @@ class AccountsTools:
 
     def call(self, principal, name: str, arguments: dict | None = None) -> list[dict]:
         if principal is None or not getattr(principal, "customer_id", None):
-            raise ToolError("Account tools are only for signed-in bank customers.")
+            raise AccessRefused("Account tools are only for signed-in bank customers.")
         tool, args = validate(TOOLS, name, arguments)
         with read_only(self._engine, principal) as conn:
             return tool.run(conn, args)

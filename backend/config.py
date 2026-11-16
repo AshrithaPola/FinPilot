@@ -4,6 +4,7 @@ Every tunable and secret comes from the environment (or a local .env file) —
 nothing is hardcoded. Defaults are chosen for local development; docker-compose
 overrides the service hosts.
 """
+from datetime import date
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -84,6 +85,11 @@ class Settings(BaseSettings):
     # even a second rejects a token used right after sign-in as "used too
     # early" (seen live: this machine ran ~1.5 s behind). Firebase allows 0-60.
     firebase_clock_skew_seconds: int = Field(default=5, ge=0, le=60)
+
+    # --- Demo date ---
+    # The synthetic data ends on 2026-06-30: "today", "this month" and as-of
+    # dates mean this day, and /ask returns it so the UI can show it.
+    demo_today: date = date(2026, 6, 30)
 
     # --- Retrieval ---
     top_k: int = 6            # chunks handed to the LLM after fusion

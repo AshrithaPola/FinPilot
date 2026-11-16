@@ -16,18 +16,24 @@ from engine.graph import answer
 
 
 def show(question: str, result: dict) -> str:
-    lines = [f"Q: {question}"]
+    lines = [f"Q: {question}  (today is {result['demo_today']})"]
     plan = result.get("plan") or {}
     for s in plan.get("steps", []):
         status = "ok" if s["status"] == "done" else f"FAILED ({s['error']})"
-        lines.append(f"  {s['id']} {s['agent']}.{s['tool']} {json.dumps(s['arguments'])} -> {status}")
+        again = " [re-plan]" if s.get("round") == 2 else ""
+        note = f" ({s['note']})" if s.get("note") else ""
+        lines.append(f"  {s['id']}{again} {s['agent']}.{s['tool']} {json.dumps(s['arguments'])} -> {status}{note}")
     lines += [f"A: {result['answer']}", "Citations:"]
     for c in result["citations"]:
         source = (f"{c['filename']} > {c['section']}" if c["kind"] == "document"
                   else f"{c['tool']}" + (f" ({c['attribution']})" if c.get("attribution") else ""))
         lines.append(f"  [{c['n']}] {source}")
+    for i, verdict in enumerate(result.get("validation", []), 1):
+        lines.append(f"Check {i}: " + "; ".join(
+            f"{name} {'pass' if v['passed'] else 'FAIL: ' + v['reason']} ({v['by']})" for name, v in verdict.items()))
     lines.append(f"LLM calls: {result['llm_calls']} {result['llm_calls_by_role']}; "
                  f"{result['timings']['total_ms'] / 1000:.1f} s; outcome {result['outcome']}")
+    lines.append("Timings: " + ", ".join(f"{k[:-3]} {v / 1000:.1f} s" for k, v in result["timings"].items()))
     return "\n".join(lines)
 
 

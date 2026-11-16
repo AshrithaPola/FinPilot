@@ -25,7 +25,9 @@ class FakeLLM:
         relevant   - what the grading call returns
         grounded   - what the groundedness call returns (a list pops one value
                      per call, so a test can fail the first check then pass)
-        answer     - what generation returns
+        answer     - what generation returns (a list pops one per call)
+        plan, replan, rewrite, verdict - the engine's planner, re-planner,
+                     query rewriter and validators (see __init__)
 
     `embed_calls` mirrors the paired FakeEmbeddings's activity so tests can
     assert "zero model traffic" (chat AND embeddings) in one place.
@@ -40,12 +42,17 @@ class FakeLLM:
         self.embed_calls: list[list[str]] = []
         self.receipt: dict = {}  # what the receipt reader (vision) returns
         self.plan: dict = {"intent": "", "out_of_scope": True, "steps": []}  # what the planner returns
+        self.replan: dict = {"intent": "", "out_of_scope": False, "steps": []}  # what the re-planner returns
+        self.rewrite: str = ""  # the documents agent's rewritten query
+        # The validators' verdict (a list pops one per call); default: all pass.
+        self.verdict: dict | list[dict] = {n: {"passed": True, "reason": "ok"}
+                                           for n in ("gatekeeper", "auditor", "strategist")}
 
     async def complete_text(self, model, system, user, max_tokens=4096, role="") -> str:
         self.chat_calls.append({"model": model, "system": system, "user": user, "role": role})
         if self.generate_error is not None:
             raise self.generate_error
-        return self.answer
+        return self.answer.pop(0) if isinstance(self.answer, list) else self.answer
 
     async def complete_json(self, model, system, user, schema, max_tokens=1024, role="",
                             image=None) -> dict:
@@ -55,6 +62,13 @@ class FakeLLM:
             return dict(self.receipt)
         if role == "planner":
             return dict(self.plan)
+        if role == "replanner":
+            return dict(self.replan)
+        if role == "query_rewriter":
+            return {"query": self.rewrite}
+        if role == "validator":
+            verdict = self.verdict
+            return verdict.pop(0) if isinstance(verdict, list) else verdict
         if "relevance grader" in system:
             return {"relevant": self.relevant}
         if "groundedness auditor" in system:

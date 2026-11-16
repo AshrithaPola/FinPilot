@@ -5,7 +5,7 @@ The plan, the architecture checklist and the commit budget are in
 enterprise build, its eval baselines and decisions) is in git history: see
 `docs/PROGRESS.md` at commit 51ba57a.
 
-**Commits: 21 of 28** (budget raised to 24 and then 25 on 2026-11-14, to 26 on 2026-11-16, and to 28 the same day: clean commits matter more than the count) (budget decided 2026-11-13; the Compose-name chore is outside it).
+**Commits: 22 of 28** (budget raised to 24 and then 25 on 2026-11-14, to 26 on 2026-11-16, and to 28 the same day: clean commits matter more than the count) (budget decided 2026-11-13; the Compose-name chore is outside it).
 
 ## Chores outside the phase budget
 
@@ -658,7 +658,7 @@ finpilot_app's.
 - **No arithmetic in the model.** A calculation step refers to earlier
   results ("$s1[0].balance_cents", "$s2[*].amount_cents"), resolved in
   code. Amounts are formatted in code too: dollars beside every cents
-  field, SEC figures ("$47,941,000,000", "$7.25 per share"), prices to
+  field, SEC figures ("$47.94 billion" since Phase 7, "$7.25 per share"), prices to
   the cent.
 - **LLM calls per question: 2** (planner, summarizer), under the target of
   3 to 4; Phase 7's validator adds the third. Counted by the engine itself
@@ -730,15 +730,178 @@ Citations:
 LLM calls: 2 {'planner': 1, 'summarizer': 1}; 4.7 s; outcome answered
 ```
 
+### Notes (follow-ups, folded into the Phase 7 commit)
+
+- **The documents agent has its own LLM loop.** After a search, code checks
+  whether the evidence is weak: nothing found, a best rerank score below 0
+  (the cross-encoder's logit), or, without rerank, no passage holding half
+  the query's content words. Only then one LLM call (role `query_rewriter`)
+  rewrites the query in the words the passage would use, and it searches
+  once more, keeping the second result only if it isn't weak too. The step
+  says so (`note`).
+- **One re-plan when a step fails** (role `replanner`): the planner sees
+  each step's status and error and plans replacement steps that can refer
+  to the results of the steps that worked. Once only, and not when a tool
+  refused the caller outright (`AccessRefused`: staff asking for customer
+  data), where another plan can't help. A refused `customer_id` argument
+  does get its one re-plan; the re-planner is told not to work around
+  refusals, and the tools would refuse again anyway.
+- **DEMO_TODAY** (default 2026-06-30, the last day of the data): the
+  engine's "today" for the planner ("this month", "this year"), the
+  summarizer and the validators, and the as-of date of searches (the
+  document versions in force that day), prices and rates when no as_of is
+  given. `/ask` returns it as `demo_today`. A question about another date
+  gets figures for the nearest data, said plainly; silently answering for
+  another date fails the auditor (below).
+- **Receipts:** the reader is told these are US receipts, dates MM/DD/YYYY.
+  All 10 again (`python -m bank.receipts extract --fresh`): **merchant
+  10/10, date 10/10 (was 8/10), amount 10/10, card last 4 10/10.**
+- **Large amounts in code:** "$47.94 billion", "$1.25 million".
+
+## Phase 7: the validation nodes
+
+| # | Commit | What |
+|---|---|---|
+| 1 | this commit | The Phase 6 follow-ups above, and gatekeeper, auditor and strategist after the summarizer |
+
+### Notes
+
+- **Every written answer is checked** (`engine/checks.py`, the `check`
+  node). The fixed replies (out of scope, nothing found, small talk) aren't.
+  Code first, no LLM: every dollar amount and percentage must match a
+  number in the evidence or the question (to the precision the answer
+  gives: "$47.94 billion" matches 47,941,000,000), there must be a
+  citation, and no "you should buy", "I recommend investing", "I've
+  transferred" and no other customer's id. Then **one structured LLM call**
+  (role `validator`) judges the three:
+  - **gatekeeper:** does it answer the question asked?
+  - **auditor:** is every claim, number and date in the cited evidence, with
+    the as-of date said when it differs from the date asked about?
+  - **strategist:** no investment, tax or legal advice, no money moved or
+    promised, nothing about another customer.
+- **A failed check regenerates once** with the reason (the summarizer sees
+  its previous answer and why it was rejected), and the new answer is
+  checked again. A second failure is refused: "I can't give you an answer
+  I could check against your accounts and the bank's documents (part of
+  it wasn't supported by your data or the documents)…", outcome
+  `refused_unverified`. A missing or unreadable verdict counts as a fail.
+  `/ask` returns every verdict (`validation`), which validator failed and
+  whether code or the LLM caught it.
+- **Tests** (unit, fake LLM; CI): a wrong number is caught by the auditor in
+  code and regenerated without a validator call; "you should buy VTI" is
+  caught by the strategist and, on the second try, refused; an answer to
+  another question is caught by the gatekeeper (the fake verdict) and
+  regenerated with the reason. Plus the rewrite and the re-plan.
+- **The real validator, on planted answers** to "Can I afford $1,200 this
+  month and stay above $500?" (cust-0036, real evidence, gemini-3.5-flash-lite;
+  code checks and the LLM call each run on their own, to see both):
+
+| Planted answer | Code checks | LLM validator |
+|---|---|---|
+| Wrong number: balance "$3,677.23", "$2,477.23 left" | auditor fails: neither figure is in the evidence | auditor fails: "the evidence shows it is $2,677.23" |
+| Unanswered: only the balance | pass | gatekeeper fails: "fails to answer whether the customer can afford $1,200" |
+| Advice: "You should buy VTI with the rest" | strategist fails | strategist fails: "gives investment advice by telling the customer to buy VTI" |
+| Wrong date: "today, November 16, 2026, your checking has…" | pass | auditor fails: "the evidence states the date is 2026-06-30" |
+
+- **LLM calls per question: 3.0 on average** over the same five questions
+  (planner, summarizer, validator each), in the 3 to 4 target. The rewrite,
+  re-plan and regeneration didn't fire on them: every search was strong,
+  no step failed, every answer passed the first time. Two more questions
+  below (a vague policy question and a date after the data) also took 3.
+- **Latency is the model's, today.** 16 to 37 s a question, against 3 to
+  11 s in Phase 6. The same call took 0.5 s once and 7 to 9 s the next
+  (planner 8.2 s, summarizer 6.5 s, validator 0.9 s on one question; 503
+  "high demand" retries throughout). The validator adds one more call of
+  that. Phase 8 measures it properly.
+- **Seen in the run, fixed:** the planner searched "fee schedule" for the
+  $15 charge and cited a section on how fees are shown. Its recipe now asks
+  for a query naming the fee and its rule; the planner still wrote "fee
+  schedule" once afterwards, but the answer named the purchase that
+  caused it. Phase 10's eval will tell whether it needs more.
+
+```
+Q: Why was I charged $15 on April 6, 2026?  (today is 2026-06-30)
+  s1 financial_data.list_fees {"start": "2026-04-06", "end": "2026-04-06"} -> ok
+  s2 financial_data.list_transactions {"start": "2026-04-05", "end": "2026-04-06"} -> ok
+  s3 documents.search {"query": "fee schedule", "doc_type": "fee_schedule"} -> ok
+A: You were charged a $15.00 overdraft fee on April 6, 2026, for a card purchase of $25.86 at Corner Grocer [1][2]. Every fee appears as its own line on your statement, showing the date and related transaction [3].
+Citations:
+  [1] list_fees
+  [2] list_transactions
+  [3] fee-schedule-2026.md > FinPilot Bank Schedule of Fees: Personal Accounts > 6. How fees are shown
+Check 1: gatekeeper pass (llm); auditor pass (llm); strategist pass (llm)
+LLM calls: 3 {'planner': 1, 'summarizer': 1, 'validator': 1}; 27.1 s; outcome answered
+
+Q: Can I afford $1,200 this month and stay above $500?  (today is 2026-06-30)
+  s1 financial_data.get_balance {"account_type": "checking"} -> ok
+  s2 calculation.afford {"balance_cents": "$s1[0].balance_cents", "amount_cents": 120000, "keep_at_least_cents": 50000} -> ok
+A: Yes, you can afford that amount because your remaining balance after the purchase would be $1,477.23 as of 2026-06-30, which keeps you above your minimum threshold [1][2].
+Citations:
+  [1] get_balance
+  [2] afford
+Check 1: gatekeeper pass (llm); auditor pass (llm); strategist pass (llm)
+LLM calls: 3 {'planner': 1, 'summarizer': 1, 'validator': 1}; 29.0 s; outcome answered
+
+Q: How much did I spend on groceries in May 2026?  (today is 2026-06-30)
+  s1 financial_data.list_transactions {"category": "groceries", "start": "2026-05-01", "end": "2026-05-31", "limit": 200} -> ok
+  s2 calculation.total {"amounts_cents": "$s1[*].amount_cents"} -> ok
+A: You spent $171.05 at FreshFields Market and $88.93 at Corner Grocer in May 2026, for a total of $259.98 [1][2].
+Citations:
+  [1] list_transactions
+  [2] total
+Check 1: gatekeeper pass (llm); auditor pass (llm); strategist pass (llm)
+LLM calls: 3 {'planner': 1, 'summarizer': 1, 'validator': 1}; 17.1 s; outcome answered
+
+Q: What were Coca-Cola's revenues in its last two fiscal years, and what does it see as a main risk?  (today is 2026-06-30)
+  s1 financial_data.get_company_financials {"ticker": "KO", "metric": "revenue", "years": 2} -> ok
+  s2 documents.search {"query": "risk factors Coca-Cola main risk", "doc_type": "sec_10k"} -> ok
+A: Coca-Cola reported revenues of $47.94 billion for the 2025 fiscal year and $47.06 billion for the 2024 fiscal year [1]. The company highlights several risk factors in its Form 10-K, including risks related to consumer demand and product preferences [2], unfavorable general economic and geopolitical conditions such as inflationary pressures and recession risks [3], execution and regulatory risks from introducing new products like alcohol beverages [4], environmental factors such as climate change and water scarcity affecting agricultural ingredients [5], and dependencies on the financial strength and profitability of independent bottling partners [6].
+Citations:
+  [1] get_company_financials (SEC EDGAR, 10-K filed 2026-02-20 (accession 0001628280-26-010047))
+  [2] public/ko-10k-2025.md > The Coca-Cola Company Form 10-K, fiscal year ended December 31, 2025 > ITEM 1A. RISK FACTORS > RISKS RELATED TO CONSUMER DEMAND FOR OUR PRODUCTS
+  [3] public/ko-10k-2025.md > The Coca-Cola Company Form 10-K, fiscal year ended December 31, 2025 > ITEM 1A. RISK FACTORS > RISKS RELATED TO OUR OPERATIONS
+  [4] public/ko-10k-2025.md > The Coca-Cola Company Form 10-K, fiscal year ended December 31, 2025 > ITEM 1A. RISK FACTORS > RISKS RELATED TO CONSUMER DEMAND FOR OUR PRODUCTS
+  [5] public/ko-10k-2025.md > The Coca-Cola Company Form 10-K, fiscal year ended December 31, 2025 > ITEM 1A. RISK FACTORS > RISKS RELATED TO ENVIRONMENTAL AND SOCIAL FACTORS
+  [6] public/ko-10k-2025.md > The Coca-Cola Company Form 10-K, fiscal year ended December 31, 2025 > ITEM 1A. RISK FACTORS > RISKS RELATED TO THE COCA-COLA SYSTEM
+Check 1: gatekeeper pass (llm); auditor pass (llm); strategist pass (llm)
+LLM calls: 3 {'planner': 1, 'summarizer': 1, 'validator': 1}; 37.0 s; outcome answered
+
+Q: What is VTI's expense ratio, and what is its latest price?  (today is 2026-06-30)
+  s1 documents.search {"query": "VTI expense ratio", "doc_type": "fund_prospectus"} -> ok
+  s2 financial_data.get_price {"symbol": "VTI"} -> ok
+A: VTI has a total annual fund operating expense ratio of 0.03% [1]. Its latest price is $337.35 as of June 30, 2026, which is a synthetic demo price (not a market price) [7].
+Citations:
+  [1] public/vti-summary-prospectus-2026.md > Vanguard Total Stock Market ETF (VTI) summary prospectus, April 2026 > Fees and Expenses
+  [7] get_price (Synthetic demo price (not a market price))
+Check 1: gatekeeper pass (llm); auditor pass (llm); strategist pass (llm)
+LLM calls: 3 {'planner': 1, 'summarizer': 1, 'validator': 1}; 22.5 s; outcome answered
+
+Q: How far below zero can my checking go before you charge me?  (today is 2026-06-30)
+  s1 documents.search {"query": "overdraft fee cushion threshold checking", "doc_type": "fee_schedule"} -> ok
+A: Your available balance can be overdrawn by $50.00 or less after a transaction without incurring an overdraft fee [1]. We charge a $15.00 overdraft fee per item when we pay a transaction that overdraws your available balance by more than $50.00 [1].
+Citations:
+  [1] fee-schedule-2026.md > FinPilot Bank Schedule of Fees: Personal Accounts > 1. Everyday Checking
+Check 1: gatekeeper pass (llm); auditor pass (llm); strategist pass (llm)
+LLM calls: 3 {'planner': 1, 'summarizer': 1, 'validator': 1}; 20.1 s; outcome answered
+
+Q: What was my checking balance on December 1, 2026?  (today is 2026-06-30)
+  s1 financial_data.get_balance {"account_type": "checking"} -> ok
+A: I couldn't work out your checking balance for December 1, 2026, because the available balance is only as of June 30, 2026 [1]. As of June 30, 2026, your checking balance was $2,677.23 [1].
+Citations:
+  [1] get_balance
+Check 1: gatekeeper pass (llm); auditor pass (llm); strategist pass (llm)
+LLM calls: 3 {'planner': 1, 'summarizer': 1, 'validator': 1}; 22.1 s; outcome answered
+```
+
 ## Phase 10 notes (from 2026-11-14)
 
 - **Reranker and tables.** The cross-encoder demoted table-row chunks
   (the APY table and the "Overdraft cushion" row fell to rank 4 in the
   branch experiment): test skipping the rerank for table chunks.
 - **Ambiguous receipt dates.** "01/02/2026" is 2 January in the US and was
-  read as 1 February (2 of 10 dates after the card-data change). Test the
-  harder receipts with dates whose day is 12 or less, and tell the reader
-  the receipts are US-format, or render ISO dates.
+  read as 1 February (2 of 10 dates after the card-data change). Fixed in
+  Phase 7 by telling the reader the receipts are US-format (10/10); keep
+  dates whose day is 12 or less among the harder receipts.
 - **Harder receipts.** Add 5 receipt images that are blurred, rotated and
   low-contrast, so the vision accuracy claim (10/10 per field) isn't
   measured on clean renders only.

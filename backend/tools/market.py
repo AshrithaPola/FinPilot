@@ -16,7 +16,7 @@ import sqlalchemy as sa
 from pydantic import Field, model_validator
 
 from bank.market import METRICS, SERIES
-from tools.common import Args, Tool, ToolError, read_only, rows, validate
+from tools.common import AccessRefused, Args, Tool, ToolError, read_only, rows, validate
 
 Symbol = Annotated[str, Field(pattern=r"^[A-Z]{1,5}$")]
 FRED_NOTICE = "This product uses the FRED® API but is not endorsed or certified by the Federal Reserve Bank of St. Louis."
@@ -113,7 +113,7 @@ class MarketTools:
 
     def call(self, principal, name: str, arguments: dict | None = None) -> list[dict]:
         if principal is None:
-            raise ToolError("Market tools are for signed-in users.")
+            raise AccessRefused("Market tools are for signed-in users.")
         tool, args = validate(TOOLS, name, arguments)
         with read_only(self._engine) as conn:  # public data: no access context needed
             return tool.run(conn, args)
