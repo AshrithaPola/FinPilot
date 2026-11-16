@@ -5,7 +5,7 @@ The plan, the architecture checklist and the commit budget are in
 enterprise build, its eval baselines and decisions) is in git history: see
 `docs/PROGRESS.md` at commit 51ba57a.
 
-**Commits: 18 of 26** (budget raised to 24 and then 25 on 2026-11-14, and to 26 on 2026-11-16 after commit 17 fixed a test of mine that CI caught; 8 left for Phases 6 to 12, no spare) (budget decided 2026-11-13; the Compose-name chore is outside it).
+**Commits: 19 of 26** (budget raised to 24 and then 25 on 2026-11-14, and to 26 on 2026-11-16 after commit 17 fixed a test of mine that CI caught; commit 19 fixed another, so the plan is one over again: 7 left for the 8 of Phases 6 to 12) (budget decided 2026-11-13; the Compose-name chore is outside it).
 
 ## Chores outside the phase budget
 
@@ -430,7 +430,8 @@ finpilot_app's.
 | 1 | `9046cf3` | Public sources (SEC 10-K Items 1A and 7, ETF summary prospectuses, CFPB answers): fetched with `SEC_USER_AGENT`, cached outside git, chunked and loaded like the bank's documents; paced embedding in both loaders |
 | 2 | `a58e235` | Accounts tools (read-only, parameterized, under the customer's RLS context) with adversarial tests; search legs in one SQL statement |
 | fix | `028e2ed` | A hostile-argument test meant to pass validation used `or_1_eq_1`, which the category rule (letters and underscores) rightly refuses; now `or_one_eq_one` (CI caught it) |
-| 3 | this commit | Balances (starting balances in the generator, `get_balance`); market tools (prices, SEC financials, FRED rates) and the calculator; search in one round trip |
+| 3 | `0c889ba` | Balances (starting balances in the generator, `get_balance`); market tools (prices, SEC financials, FRED rates) and the calculator; search in one round trip |
+| fix | this commit | The schema test listed every raw-SQL table by hand and failed on 0013's two new ones (the same trap as Phase 1); it now ignores any table the ORM doesn't define, and still catches drift in the log tables (CI caught it) |
 
 ### Notes
 

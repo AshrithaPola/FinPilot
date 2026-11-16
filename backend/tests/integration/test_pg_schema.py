@@ -67,15 +67,19 @@ def test_log_tables_still_match_the_models(pg_url):
 
     with engine.connect() as conn:
         diffs = compare_metadata(MigrationContext.configure(conn), Base.metadata)
-    # The chunks, access and customer-data tables (and their indexes) are raw SQL, not ORM
-    # models, so autogenerate sees them as "not in the models".
-    raw_sql_tables = {"chunks", "orgs", "teams", "users", "team_memberships", "documents",
-                      "customers", "accounts", "cards", "transactions", "fees", "holdings",
-                      "securities", "prices", "doc_tables", "doc_table_rows", "receipt_images"}
+    # Only the ORM models (the log tables) are compared. Every other table (chunks,
+    # access, customer and market data, and their indexes) is raw SQL in its
+    # migration, so autogenerate reports it as "not in the models"; that is
+    # expected, and listing those tables here broke this test with every new
+    # migration (twice).
+    orm_tables = set(Base.metadata.tables)
 
-    def on_chunks(diff):
+    def raw_sql(diff):
+        # A table or index diff carries the object; a column diff has (schema, table, ...)
+        # with no object, so its table is None here and it always counts.
         obj = diff[1]
-        return (getattr(obj, "name", None) in raw_sql_tables
-                or getattr(getattr(obj, "table", None), "name", None) in raw_sql_tables)
+        table = getattr(obj, "name", None) if isinstance(obj, sa.Table) else \
+            getattr(getattr(obj, "table", None), "name", None)
+        return table is not None and table not in orm_tables
 
-    assert [d for d in diffs if not on_chunks(d)] == []
+    assert [d for d in diffs if not raw_sql(d)] == []
