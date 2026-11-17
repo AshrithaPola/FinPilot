@@ -5,7 +5,7 @@ The plan, the architecture checklist and the commit budget are in
 enterprise build, its eval baselines and decisions) is in git history: see
 `docs/PROGRESS.md` at commit 51ba57a.
 
-**Commits: 23 of 28** (budget raised to 24 and then 25 on 2026-11-14, to 26 on 2026-11-16, and to 28 the same day: clean commits matter more than the count) (budget decided 2026-11-13; the Compose-name chore is outside it).
+**Commits: 25 of 28** (budget raised to 24 and then 25 on 2026-11-14, to 26 on 2026-11-16, and to 28 the same day: clean commits matter more than the count) (budget decided 2026-11-13; the Compose-name chore is outside it).
 
 ## Chores outside the phase budget
 
@@ -991,6 +991,44 @@ Three deliberately vague questions on Neon (cust-0036), traced:
   first time in a real run: the LLM auditor caught dates it judged
   misstated, and the second answer passed.
 
+## Cleanup after the audit (2026-11-17)
+
+| # | Commit | What |
+|---|---|---|
+| 1 | this commit | README and plan checklist match the build; DocuMind leftovers removed; every setting in `.env.example`; the deposit agreement as a real PDF |
+
+- **The audit** (read-only, 2026-11-16) found every architecture item but
+  evaluation and red-teaming built and tested; the README still said
+  "Phase 0" and no checklist box was ticked. The README now describes the
+  engine, what's built, how to run it and the API; the plan's boxes are
+  ticked to match the audit (24 done, 10 open, the partial ones say why),
+  and the gatekeeper and strategist read as built: the gatekeeper checks the
+  answer answers the question (scope is the planner's and the router's),
+  the strategist refuses advice, money movement and other customers' data.
+- **Removed:** DocuMind's eval harness (`run_eval.py`, `dataset.json`,
+  `sample.pdf`, `rejudge_faithfulness.py`, and `bench_retrieval.py` and
+  `count_grading_tokens.py`, which only served it), its RAGAS requirements
+  and CI step, the upload size check in `extract.py` and `MAX_UPLOAD_MB`.
+  Phase 10 builds its eval on what stays: `branch_experiment.py` (labelled
+  questions, recall@k, MRR), `latency_breakdown.py`, the traces, and
+  `firebase_auth.py` for calling a live API.
+- **Kept on purpose:** `@documind.test` in the two Firebase scripts: it's
+  the domain the existing eval account is checked against.
+- **`.env.example`** lists every setting `config.py` reads, with a comment.
+- **The deposit agreement is now a real PDF** (`data/bank/deposit-agreement.pdf`,
+  11 pages, running header and "Page N of M" footer), built from
+  `data/bank/sources/deposit-agreement.md` by
+  `data/bank/tools/build_agreement_pdf.py` (reportlab, a build-time tool
+  only). The corpus loads the PDF. The PDF parser now recovers structure from
+  the layout with pdfplumber (headings by font size, ruled tables as pipe
+  tables, paragraph breaks by line gaps, a paragraph joined across a page
+  break), then goes through the Markdown parser. A test checks it gets back
+  the source exactly: the same 25 sections, 4 tables cell for cell, every
+  word, and no header or footer.
+- **Neon still holds the Markdown version** of the agreement. Reloading it
+  as the PDF costs Gemini calls (metadata and embeddings for its chunks),
+  so it waits for the 2 GB memory floor.
+
 ## Phase 10 notes (from 2026-11-14)
 
 - **Reranker and tables.** The cross-encoder demoted table-row chunks
@@ -1000,6 +1038,13 @@ Three deliberately vague questions on Neon (cust-0036), traced:
   read as 1 February (2 of 10 dates after the card-data change). Fixed in
   Phase 7 by telling the reader the receipts are US-format (10/10); keep
   dates whose day is 12 or less among the harder receipts.
+- **Decide the retrieval defaults on the full corpus:** parent expansion
+  (best MRR in the Phase 4 experiment, off for now) and rerank (on, but it
+  demotes table rows and costs 0.9 to 1.5 s a search on CPU).
+- **Tune the weak-search cutoff** (`RERANK_FLOOR`, 0 now). The planner's
+  own queries scored 2.4 to 6.0 at the top and never tripped it; measure
+  the customer's wording searched as is, and questions the corpus can't
+  answer, then set the cutoff between the two.
 - **Self-judging.** The same model (gemini-3.5-flash-lite) writes and
   validates the answer, and a model tends to approve its own output. The
   code checks (figures, citations, advice phrasing) don't depend on it;

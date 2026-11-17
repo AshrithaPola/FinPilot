@@ -616,7 +616,7 @@ translation, the English version controls.
 
 ## 24. How to contact us
 
-24.1 **In the app.** Use Help → Contact us or send a secure message. Secure
+24.1 **In the app.** Use Help, then Contact us, or send a secure message. Secure
 messages count as written notice under this agreement.
 
 24.2 **By phone.** Call the number on the back of your card, or on your

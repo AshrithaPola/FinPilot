@@ -47,7 +47,7 @@ documents:
     effective_date: 2026-02-01
     clearance: 0
     status: draft
-  - file: deposit-agreement.md
+  - file: deposit-agreement.pdf
     doc_type: agreement
     department: legal
     version: "2025.2"

@@ -18,13 +18,14 @@ say where it came from and Phase 4 can join a chunk to its parent section.
 import csv
 import io
 import re
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
 import yaml
 
 from config import Settings
-from ingestion.extract import PageText, validate_and_extract
+from ingestion.extract import IngestionError, PageText, validate_and_extract
 
 
 @dataclass
@@ -150,6 +151,84 @@ def parse_pages(pages: list[PageText]) -> list[Block]:
             for page in pages for para in re.split(r"\n\s*\n", page.text) if para.strip()]
 
 
+_PDF_BODY_RATIO = 1.25  # a line this much larger than the body text is a heading
+_SENTENCE_END = re.compile(r"[.:;!?)\"”|]\s*$")
+
+
+def pdf_pages(data: bytes, max_pages: int) -> list[PageText]:
+    """A PDF's pages as Markdown, structure recovered from the layout:
+    lines much larger than the body text become headings (the largest size
+    is the title), ruled tables become pipe tables, and a gap between lines
+    is a paragraph break. Headers and footers are still in the text, for
+    noise.strip_page_furniture."""
+    import pdfplumber
+
+    try:
+        pdf = pdfplumber.open(io.BytesIO(data))
+    except Exception as exc:
+        raise IngestionError("Could not read the PDF (is it damaged or password-protected?).") from exc
+    with pdf:
+        if len(pdf.pages) > max_pages:
+            raise IngestionError(f"PDF has {len(pdf.pages)} pages; the limit is {max_pages}.")
+        laid_out = []  # per page: [(top, kind, payload)]
+        sizes: Counter[float] = Counter()
+        for page in pdf.pages:
+            tables = page.find_tables()
+            boxes = [t.bbox for t in tables]
+
+            def outside(obj, boxes=boxes):
+                return not any(x0 <= obj["x0"] and obj["x1"] <= x1 and top <= obj["top"] and obj["bottom"] <= bottom
+                               for x0, top, x1, bottom in boxes)
+
+            items = [(t.bbox[1], "table", t.extract()) for t in tables]
+            for line in page.filter(outside).extract_text_lines():
+                size = round(max(c["size"] for c in line["chars"]), 1)
+                sizes[size] += len(line["text"])
+                items.append((line["top"], "line", (line["text"].strip(), size, line["bottom"])))
+            laid_out.append(sorted(items, key=lambda item: item[0]))
+    if not sizes:
+        raise IngestionError("No extractable text in the PDF (a scan needs OCR, which isn't supported).")
+    body = sizes.most_common(1)[0][0]
+    title = max(sizes)
+
+    pages = []
+    for number, items in enumerate(laid_out, start=1):
+        out, last_bottom = [], None
+        for top, kind, payload in items:
+            if kind == "table":
+                rows = [[_cell((c or "").replace("\n", " ")) for c in row] for row in payload if row]
+                if rows:
+                    block = _table_block(rows[0], rows[1:], "")
+                    out += ["", block.header, block.text, ""]
+                last_bottom = None
+                continue
+            text, size, bottom = payload
+            if size >= body * _PDF_BODY_RATIO:
+                out += ["", ("# " if size == title else "## ") + text, ""]
+            else:
+                if last_bottom is not None and top - last_bottom > size * 0.45:
+                    out.append("")
+                out.append(text)
+            last_bottom = bottom
+        pages.append(PageText(number, "\n".join(out).strip()))
+    return pages
+
+
+def parse_pdf(data: bytes, settings: Settings) -> tuple[list[Block], int]:
+    """A PDF through the Markdown parser: pages as Markdown, page furniture
+    stripped, and a paragraph that runs over a page break joined again."""
+    from ingestion.noise import strip_page_furniture
+
+    pages, removed = strip_page_furniture(pdf_pages(data, settings.max_pages))
+    text = ""
+    for page in pages:
+        body = page.text.strip()
+        if body:
+            joined = text and not _SENTENCE_END.search(text) and not body.startswith(("#", "|"))
+            text += ("\n" if joined else "\n\n") + body
+    return parse_markdown(text), removed
+
+
 def parse_file(data: bytes, filename: str, settings: Settings) -> tuple[list[Block], int]:
     """Dispatch on the extension; returns the blocks and the characters of
     noise removed (page furniture, navigation lines)."""
@@ -165,6 +244,10 @@ def parse_file(data: bytes, filename: str, settings: Settings) -> tuple[list[Blo
         return parse_xlsx(data), 0
     if suffix in (".yaml", ".yml"):
         return parse_openapi(data.decode("utf-8-sig")), 0
+    if suffix == ".pdf":
+        blocks, removed = parse_pdf(data, settings)
+        blocks, nav = strip_nav_lines(blocks)
+        return blocks, removed + nav
     pages, _ = validate_and_extract(data, name, settings)
     pages, removed = strip_page_furniture(pages)
     blocks, nav = strip_nav_lines(parse_pages(pages))

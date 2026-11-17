@@ -23,7 +23,7 @@ def manifest():
 def test_the_manifest_lists_every_document_and_nothing_else(manifest):
     on_disk = {p.relative_to(BANK).as_posix() for p in BANK.rglob("*")
                if p.is_file() and p.name not in NOT_DOCUMENTS
-               and not {"tools", "receipts"} & set(p.parts)}  # receipts are customer data
+               and not {"tools", "receipts", "sources"} & set(p.parts)}  # receipts: customer data; sources: what a tool builds a document from
     assert {d["file"] for d in manifest["documents"]} == on_disk
 
 
@@ -108,14 +108,47 @@ def test_enough_documents_span_several_chunks(corpus):
     # Chunking and retrieval need documents whose answers sit in different chunks.
     multi = [d.file for d in corpus.values() if len(d.chunks) >= 3]
     assert len(multi) >= 6, multi
-    assert len(corpus["deposit-agreement.md"].chunks) >= 15
+    assert len(corpus["deposit-agreement.pdf"].chunks) >= 15
 
 
 def test_the_deposit_agreement_is_full_length():
-    text = (BANK / "deposit-agreement.md").read_text(encoding="utf-8")
+    text = (BANK / "sources" / "deposit-agreement.md").read_text(encoding="utf-8")
     assert 4000 <= len(text.split()) <= 6000
     assert len(re.findall(r"^## \d+\. ", text, re.M)) >= 20
     assert text.count("|---|") >= 1
+
+
+def test_the_pdf_agreement_parses_to_its_markdown_source():
+    """The corpus loads deposit-agreement.pdf (built from sources/ by
+    data/bank/tools/build_agreement_pdf.py). The PDF parser must get back
+    what the Markdown says: every section, every table cell, every word, and
+    none of the page headers or "Page N of M" footers."""
+    from config import Settings
+    from ingestion.parse import parse_file, parse_markdown
+
+    pdf, removed = parse_file((BANK / "deposit-agreement.pdf").read_bytes(), "deposit-agreement.pdf",
+                              Settings(gemini_api_key="x"))
+    source = parse_markdown((BANK / "sources" / "deposit-agreement.md").read_text(encoding="utf-8"))
+
+    def plain(text):
+        return re.sub(r"\s+", " ", text.replace("**", "")).strip()
+
+    def cells(block):
+        rows = [block.header.splitlines()[0], *block.text.splitlines()]
+        return [[plain(c) for c in row.strip("|").split("|")] for row in rows]
+
+    def words(blocks):
+        text = " ".join((b.header.splitlines()[0] + " " if b.kind == "table" else "") + b.text for b in blocks)
+        return plain(text).replace("> ", "").replace("|", " ").split()
+
+    assert [b.section for b in pdf] == [b.section for b in source]
+    assert len({b.section for b in pdf}) == 25  # the title and 24 numbered sections
+    assert [b.kind for b in pdf] == [b.kind for b in source]
+    tables = [b for b in pdf if b.kind == "table"]
+    assert len(tables) == 4 and [cells(b) for b in tables] == [cells(b) for b in source if b.kind == "table"]
+    assert words(pdf) == words(source)
+    assert removed > 0 and not any("Page 3 of" in b.text or "FinPilot Bank Deposit Account Agreement" == b.text
+                                   for b in pdf)
 
 
 def test_the_canary_reaches_only_staff_chunks(corpus):

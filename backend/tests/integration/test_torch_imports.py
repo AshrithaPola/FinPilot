@@ -48,17 +48,3 @@ def test_backend_startup_with_gemini_embeddings_does_not_load_torch(pg_url, app_
 
     assert _loaded_modules(code, env) == "[]"
 
-
-def test_eval_harness_does_not_load_torch():
-    # Everything run_eval imports on the way to scoring: the harness, the
-    # Gemini judge and the RAGAS metrics. No call is made.
-    code = (
-        "import sys; sys.path.insert(0, 'eval')\n"
-        "import run_eval\n"
-        "run_eval.build_judge(); run_eval.judge_run_config()\n"
-        "from ragas import EvaluationDataset, evaluate\n"
-        "from ragas.metrics import Faithfulness, LLMContextPrecisionWithReference\n"
-    )
-    env = {"LLM_PROVIDER": "gemini", "GEMINI_API_KEY": "test-key-not-real"}
-
-    assert _loaded_modules(code, env) == "[]"

@@ -49,7 +49,7 @@ questions:
     kind: paraphrase
     gold:
       - [dispute-policy.md, Part A. Deposit accounts and debit cards > A3. Deadlines for you]
-      - [deposit-agreement.md, 8. Electronic fund transfers]
+      - [deposit-agreement.pdf, 8. Electronic fund transfers]
     answers: ["no more than $50"]
   - q: How long do I have to dispute a charge on my credit card?
     kind: paraphrase
@@ -60,18 +60,18 @@ questions:
   - q: How is the interest on my savings worked out?
     kind: paraphrase
     gold:
-      - [deposit-agreement.md, 9. Interest]
+      - [deposit-agreement.pdf, 9. Interest]
     answers: ["daily balance method"]
   - q: What happens if I take money out of a 12-month CD early?
     kind: paraphrase
     gold:
-      - [deposit-agreement.md, 10. Certificates of deposit]
+      - [deposit-agreement.pdf, 10. Certificates of deposit]
       - [account-comparison.md, Certificates of deposit]
     answers: ["12 months | 180 days of interest", "12 months | 3.90% | $500 | 180 days of interest"]
   - q: When does an account count as dormant?
     kind: paraphrase
     gold:
-      - [deposit-agreement.md, 18. Dormant accounts and unclaimed property]
+      - [deposit-agreement.pdf, 18. Dormant accounts and unclaimed property]
     answers: ["no customer-initiated activity for 24 months"]
   - q: Is there a grace period before interest is charged on card purchases?
     kind: paraphrase
@@ -97,7 +97,7 @@ questions:
   - q: Can I deposit a check with my phone, and which checks qualify?
     kind: paraphrase
     gold:
-      - [deposit-agreement.md, 5. Mobile check deposit]
+      - [deposit-agreement.pdf, 5. Mobile check deposit]
     answers: ["checks payable to you and drawn on a u.s. bank"]
   - q: What is the overdraft cushion?
     kind: exact

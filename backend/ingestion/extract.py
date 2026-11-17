@@ -143,10 +143,11 @@ SUPPORTED_EXTENSIONS = tuple(_EXTRACTORS)
 def validate_and_extract(
     file_bytes: bytes, filename: str, settings: Settings
 ) -> tuple[list[PageText], list[str]]:
-    """Validate an uploaded file and extract text, dispatching on extension.
+    """Extract a file's text, dispatching on its extension (the loaders'
+    PDF, DOCX and TXT path).
 
-    Returns (pages_with_text, warnings). Raises IngestionError on any hard
-    reject so the caller can map it straight to a 400 response.
+    Returns (pages_with_text, warnings). Raises IngestionError for a type it
+    can't read, a damaged file, or one with no text.
     """
     # PureWindowsPath handles both separator styles; suffix of "resume" is "".
     suffix = PureWindowsPath(PurePosixPath(filename).name).suffix.lower()
@@ -155,13 +156,6 @@ def validate_and_extract(
         shown = suffix or "(none)"
         raise IngestionError(
             f"Unsupported file type {shown!r}. Supported formats: PDF, DOCX, TXT."
-        )
-
-    max_bytes = settings.max_upload_mb * 1024 * 1024
-    if len(file_bytes) > max_bytes:
-        raise IngestionError(
-            f"File is {len(file_bytes) / 1_000_000:.1f} MB; the limit is "
-            f"{settings.max_upload_mb} MB."
         )
 
     return extractor(file_bytes, settings)

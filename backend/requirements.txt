@@ -1,6 +1,4 @@
 # FinPilot backend - application dependencies.
-# Eval-only extras (RAGAS etc.) live in eval/requirements.txt so the
-# runtime image stays small.
 
 fastapi==0.159.1
 uvicorn[standard]==0.54.0
@@ -26,6 +24,7 @@ sentence-transformers==6.2.0
 # 1.33.0, which sentence-transformers 6.2 also accepts).
 fastembed==0.9.1
 pypdf==6.21.2
+pdfplumber==0.11.10  # PDF layout: headings by size, ruled tables (ingestion/parse.py)
 python-docx==1.2.0
 # Corpus parsers (ingestion/parse.py): the rate-sheet workbook and the OpenAPI spec.
 openpyxl==3.1.5

@@ -121,7 +121,6 @@ class Settings(BaseSettings):
 
     # --- Input limits (validated before any model spend) ---
     max_query_chars: int = 2000
-    max_upload_mb: int = 20
     max_pages: int = 300
 
     @field_validator("database_url", "migration_database_url")

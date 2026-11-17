@@ -171,3 +171,6 @@ win32_setctime==1.2.1
 xxhash==4.0.2
 yarl==1.25.1
 zstandard==0.25.0
+pdfminer.six==20260107
+pdfplumber==0.11.10
+pypdfium2==5.15.2

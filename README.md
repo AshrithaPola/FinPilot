@@ -1,23 +1,47 @@
 # FinPilot
 
-A banking assistant for the customers of a fictional bank. It answers from the customer's own data (accounts, cards, transactions, fees, holdings), the bank's documents (fee schedules, policies, agreements, rate tables, its API spec) and public market and regulatory data, with every answer planned, run through tools, validated and traced.
+A banking assistant for the customers of a fictional bank. It answers from the customer's own data (accounts, balances, cards, transactions, fees, holdings), the bank's documents (fee schedules, policies, agreements, rate tables, its API spec) and public market and regulatory data. Every answer is planned, run through tools as the signed-in customer, checked, and traced.
 
-**Status: Phase 0 of 12.** What runs today is the retrieval core FinPilot is built on (inherited from DocuMind): hybrid pgvector + full-text search with reciprocal rank fusion, a LangGraph pipeline that refuses rather than guesses (relevance grading, generation, a groundedness check), Firebase sign-in, and row-level security in Postgres. The plan, the architecture checklist (data sources, restructuring, chunking, metadata, Neon, retrieval, planner and agents, validation, evaluation, red-teaming) and the phase-by-phase commit budget are in [docs/FINPILOT_PLAN.md](docs/FINPILOT_PLAN.md); progress is in [docs/PROGRESS.md](docs/PROGRESS.md).
+**Status: Phases 0 to 8 of 12 are built** (data, ingestion, Neon, tools, the reasoning engine, validation, tracing). Next: the chat UI (Phase 9), evaluation (10), red-teaming (11), deployment (12). The plan and its architecture checklist are in [docs/FINPILOT_PLAN.md](docs/FINPILOT_PLAN.md); what each commit did, with measurements and design decisions, is in [docs/PROGRESS.md](docs/PROGRESS.md). FinPilot grew out of an earlier document-QA project; its retrieval core and access model carried over.
 
-## What exists today
+## How a question is answered
 
-- **Retrieval.** Every chunk is stored once in Postgres with a pgvector embedding (`gemini-embedding-2` by default, or local `all-MiniLM-L6-v2`) and a full-text index. A query searches the chunk vectors, full-text search and a hypothetical-question index (one vector per chunk for the questions it answers), fused with reciprocal rank fusion, then a local cross-encoder reranks the result (`RETRIEVAL_MODE=hybrid`, `RERANK=true`; `RETRIEVAL_MODE=dense` uses the chunk vectors alone). Each hit can be widened to its parent section (`PARENT_EXPANSION`, off). These defaults are provisional: the final choice is made in the Phase 10 evaluation on the full corpus (see `docs/PROGRESS.md`). Metadata filters (department, document type, an as-of date) run in SQL; by default only the version of each document in force today is searched, across every document the caller may see.
-- **Public sources.** Items 1A and 7 of three companies' 10-Ks, three ETF summary prospectuses and CFPB answers, fetched from SEC EDGAR (with a declared User-Agent, under SEC's rate limit) and consumerfinance.gov, cited by an attribution line in every document (`python -m bank.public fetch|load`; the list is `data/public/sources.yaml`, licences in `data/SOURCES.md`). Only the list is committed, never the fetched text.
-- **Tools.** Read-only accounts tools for the signed-in customer (accounts, balances, cards, transactions, fees, holdings: no customer id argument, strict arguments, parameterized SQL, a read-only transaction under row-level security), market tools (prices with their date and source, annual figures from 10-K filings, FRED rates with FRED's notice) and a calculator (affordability, interest, returns), so the language model never does arithmetic.
-- **Reasoning engine** (`POST /ask`). A planner (one LLM call) breaks a question into steps for three agents (financial data, documents, calculation), code runs the steps as the signed-in customer, and a summarizer (a second call) writes one answer citing numbered evidence. The response carries the plan, each step's status, the citations and the LLM calls made. Arithmetic and number formatting happen in code, never in the model.
-- **Pipeline.** Input validation and PII masking, a small-talk shortcut, retrieval, a relevance grade, generation with inline citations, and a groundedness check with one retry; anything that fails becomes an explicit refusal. Answers stream only after they pass the check.
-- **Access.** Firebase identifies the user; Postgres decides what they may see (below). The bank's documents carry a clearance: 0 for customer-facing, 2 for staff-only.
-- **Documents** come only from a loader (the bank corpus loader arrives in Phase 3); there is no upload. Embedding is paced under the Gemini free tier's limits (`backend/ingestion/pacing.py`).
-- **Observability.** Every query is logged with its route, retrieved chunks, verdicts and per-stage timings; `/admin/logs` and `/admin/stats` read them, and users give thumbs up/down feedback.
+```
+POST /ask ── validate (PII masked) ── route (small talk: no model)
+                │
+              plan          LLM 1: a typed plan of up to 6 steps
+                │
+             execute        code: each step through its agent, as the caller
+                │             financial data: accounts tools (RLS) + market tools
+                │             documents: hybrid search; a weak search is rewritten once (LLM)
+                │             calculation: Decimal arithmetic, never the model
+                ├─ a step failed → one re-plan (LLM)
+                │
+            summarize       LLM 2: one answer citing numbered evidence
+                │
+              check         code checks (every figure in the evidence, a citation,
+                │           no advice), then LLM 3: gatekeeper, auditor, strategist
+                │           failed → regenerate once with the reason → else refuse
+               END          the answer, plan, steps, citations, verdicts, LLM calls, trace id
+```
+
+A typical question takes three LLM calls. The rewrite, the re-plan and the regeneration fire only when needed. Every request is stored as a trace (each stage, step, tool call, search, LLM and embedding call with tokens and estimated cost, retries, verdicts) under row-level security.
+
+## What's built
+
+- **Data, four kinds.** Synthetic customers from a seeded generator (50 customers, a year of transactions with card autopay, late payers, overdrafts and fee schedules that change mid-year), the bank's documents (Markdown, a real PDF, CSV and XLSX rate sheets, an OpenAPI spec), receipt images rendered from the generator's own transactions, and public sources (10-K Items 1A and 7 of AAPL, MSFT and KO; VTI, BND and SCHD prospectuses; CFPB guides). Only the list of public sources is committed, never the fetched text. Licences are in `data/SOURCES.md`.
+- **Ingestion.** Structure-aware parsing per format (PDF headings and ruled tables are recovered from the layout), noise removal (page headers and footers, navigation lines), and chunks of at most 512 tokens that never cross a section or hold two tables. Tables also become relational rows linked to their chunk. Receipts become fields through one Gemini vision call each, checked against the ground truth (10/10 per field). Per chunk, one LLM call per section adds a summary, keywords and likely questions, cached by content; version, effective date, department and type come from the manifest.
+- **Storage and retrieval on Neon** (Postgres + pgvector). Hybrid search fuses chunk vectors, full text and a hypothetical-question index with reciprocal rank fusion in one round trip, then a local cross-encoder (ONNX, no torch) reranks. Metadata filters run in SQL, and a search sees only the version of each document in force on its as-of date. Parent-section expansion is available. A Neon branch held the retrieval experiment (`backend/eval/branch_experiment.py`). The defaults (hybrid + rerank, no expansion) are provisional until Phase 10.
+- **Tools.** Read-only accounts tools for the signed-in customer (no customer id argument, strict arguments, parameterized SQL, a read-only transaction under row-level security), market tools (prices with their date and source, annual figures from SEC filings, FRED rates) and a calculator.
+- **Access.** Firebase identifies the user; Postgres decides what they see. The app connects as `finpilot_app`, which can't bypass row-level security; each transaction sets the caller's org, clearance, teams and customer. `scripts/leakage_check.py` proves it on a live database.
+- **Demo date.** The synthetic data ends on 2026-06-30, so that's the engine's "today" (`DEMO_TODAY`), returned by `/ask`. An answer about another date says which date its figures are for.
 
 ## Setup
 
-You need Docker and a Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey); the free tier is enough, no billing required. The key powers all LLM reasoning (generation and the grading/groundedness checks, all on `gemini-3.5-flash-lite` by default) and the default embeddings (`gemini-embedding-2`). With `EMBEDDING_PROVIDER=local`, embeddings need no key: the sentence-transformers model (~90 MB) is downloaded from HuggingFace on first startup and cached in a Docker volume after that. Changing the embedding provider, model or dimension needs a fresh database and a reload of the documents.
+Every setting, with its default and a one-line comment, is in `.env.example`.
+
+
+You need Docker and a Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey); the free tier is enough, no billing required. The key powers all LLM reasoning (the planner, summarizer, validators and query rewriter, all on `gemini-3.5-flash-lite` by default) and the default embeddings (`gemini-embedding-2`). With `EMBEDDING_PROVIDER=local`, embeddings need no key: the sentence-transformers model (~90 MB) is downloaded from HuggingFace on first startup and cached in a Docker volume after that. Changing the embedding provider, model or dimension needs a fresh database and a reload of the documents.
 
 ```bash
 cp .env.example .env
@@ -37,6 +61,7 @@ LLM settings in `.env`:
 | `GRADING_THINKING_LEVEL` | `minimal` | Gemini thinking level for the checker calls; empty = model default |
 | `LLM_MAX_ATTEMPTS` | `5` | Attempts per call on 429/overloaded before the error surfaces |
 | `LLM_REQUEST_TIMEOUT_S` | `60` | Seconds before a single Gemini request is abandoned; counts as one retryable attempt |
+| `LLM_CALL_TIMEOUT_S` | `45` | Seconds for a whole call, retries included, so one slow model can't hang a request |
 | `EMBEDDING_PROVIDER` | `gemini` | `gemini` (`gemini-embedding-2`) or `local` (`all-MiniLM-L6-v2`) |
 | `EMBEDDING_MODEL` | provider default | Override the embedding model |
 | `EMBEDDING_DIMENSIONS` | model default | 1536 for `gemini-embedding-2`, 384 for MiniLM; must match the database's vector column |
@@ -77,6 +102,8 @@ P=backend/.venv/Scripts/python                              # backend/.venv/bin/
 $P scripts/neon.py setup                                    # app role URL, migrations, finpilot_app's password
 $P scripts/neon.py run -- python -m bank.synthetic          # synthetic customers (~30 s)
 $P scripts/neon.py run -- python -m bank.corpus load        # the bank's documents: metadata + embeddings (Gemini)
+$P scripts/neon.py run -- python -m bank.public load        # public sources (fetch first: python -m bank.public fetch)
+$P scripts/neon.py run -- python -m bank.market fetch sec   # SEC company facts (also: prices, rates; need free keys)
 $P scripts/neon.py run -- python -m bank.receipts extract   # receipt fields: 10 Gemini vision calls
 $P scripts/neon.py run -- python ../scripts/leakage_check.py
 ```
@@ -89,7 +116,7 @@ Reloading is incremental. Chunk metadata is cached by chunk text, and a replaced
 
 ## Authentication and access control
 
-**Firebase identifies the user; Postgres decides what they may see.** The web UI and the eval harness sign in with Firebase email/password and send the ID token as `Authorization: Bearer ...` on every call. The backend checks the token with the Firebase Admin SDK (allowing 5 seconds of clock skew, `FIREBASE_CLOCK_SKEW_SECONDS`), then loads the user's row from Postgres on every request: org, teams, role (`viewer`, `editor`, `admin`), integer clearance (higher sees more) and an `active` flag. Nothing about access lives in Firebase custom claims, so a change applies on the user's next request, not at their next token refresh.
+**Firebase identifies the user; Postgres decides what they may see.** The web UI signs in with Firebase email/password and send the ID token as `Authorization: Bearer ...` on every call. The backend checks the token with the Firebase Admin SDK (allowing 5 seconds of clock skew, `FIREBASE_CLOCK_SKEW_SECONDS`), then loads the user's row from Postgres on every request: org, teams, role (`viewer`, `editor`, `admin`), integer clearance (higher sees more) and an `active` flag. Nothing about access lives in Firebase custom claims, so a change applies on the user's next request, not at their next token refresh.
 
 - **Deny by default.** No valid token: 401. A valid token whose user has no row, no org, or `active=false`: 403 on everything except `GET /me`, which always answers and says why (`unknown_user`, `no_org`, `inactive`). `/health` is open and reports nothing about the data.
 - **Roles.** Viewers ask questions and give feedback. There is no upload or access-change API: documents come only from the loader, which writes as an editor or admin of the bank's org. `/admin/*` is admin-only, also checks with Firebase that the token wasn't revoked, and shows only the admin's own org. LLM diagnostics (per-model request counts, token usage, raw provider errors) are returned only to admins.
@@ -102,7 +129,7 @@ Reloading is incremental. Chunk metadata is cached by chunk text, and a replaced
 1. In the Firebase console, create the project with email/password sign-in enabled, and create the user.
 2. Put the web config (`VITE_FIREBASE_*`), `FIREBASE_PROJECT_ID` and `GOOGLE_APPLICATION_CREDENTIALS` (the path to a service account key file kept outside the repo) in `.env`. docker-compose mounts that file read-only into the backend; it never goes into an image. Without these the backend refuses to start and says what is missing. CI fails if a key file is ever committed.
 3. Run the migrate step, then map the user to an admin with the owner's database URL:
-   `python scripts/setup_eval_admin.py --database-url OWNER_URL` (it looks the user's uid up by `EVAL_ADMIN_EMAIL`, creates org `eval`, and is safe to re-run; it accepts only `@documind.test` accounts). Further users and teams are rows in `users` and `team_memberships`, written as the owner; there's no admin page yet.
+   `python scripts/setup_eval_admin.py --database-url OWNER_URL` (it looks the user's uid up by `EVAL_ADMIN_EMAIL`, creates org `eval`, and is safe to re-run; it accepts only `@documind.test` accounts, the test-account domain from the project's earlier name, which the eval account still uses). Further users and teams are rows in `users` and `team_memberships`, written as the owner; there's no admin page yet.
 
 ### Known limitations of the access model
 
@@ -114,30 +141,28 @@ Reloading is incremental. Chunk metadata is cached by chunk text, and a replaced
 
 ```bash
 cd backend
-pip install -r requirements-dev.txt
+pip install -r requirements.txt -r requirements-dev.txt -c constraints.txt
 python -m pytest tests
 ```
 
-`tests/unit/` covers chunking edge cases (empty/single-sentence/boundary-sized documents), input validation (empty and oversized queries), file-type validation for all supported and rejected formats, doc scoping and filters (explicit scope, every visible document by default, current versions only), PII redaction patterns (including false-positive guards on normal technical text), the small-talk classifier in both directions, and the embedding pacing used by the loaders.
+No test calls Gemini or Neon: the LLM gateway and the embedder are replaced by deterministic fakes, and the Postgres tests create a fresh local database each. `tests/unit/` covers parsing and chunking per format (the PDF agreement must parse back to its Markdown source word for word), the synthetic data, the tools' argument validation, the calculator, the engine with a fake LLM (plans, references between steps, the re-plan, the query rewrite, and each validator catching a planted bad answer: a wrong number, an unanswered question, investment advice), tracing and per-call timeouts, and the LLM gateway against stubbed SDK clients. `tests/integration/` runs everything that touches Postgres + pgvector: row-level security per customer and per org, the accounts tools under adversarial arguments, the leakage check (and that it catches a table with RLS switched off), `/ask` end to end as a customer and as staff, and the traces under RLS.
 
-`tests/integration/` runs the store (documents and chunks into Postgres + pgvector, a fresh database per test; embeddings stubbed, everything else real), row-level security as the app role, and the full query path through the FastAPI app with LLM calls replaced by a deterministic fake of the LLM gateway: the small-talk shortcut (asserting **zero** LLM calls), the grading-fails refusal, the ungrounded-retry-then-refuse path (asserting the documented five-call worst case), the normal answer path (asserting checkers ride `GRADING_MODEL` and generation rides `GENERATION_MODEL`), doc scoping end to end, PII never reaching a prompt or the log, and the feedback upsert with its stats aggregates. CI runs these against a `pgvector/pgvector:0.8.7-pg16` service container (the compose image) and fails if the Postgres tests would skip; locally, set `TEST_POSTGRES_URL` to a pgvector database. Unit tests that only need the log tables run on SQLite.
-
-`tests/unit/test_llm_gateway.py` runs both real gateway classes, Gemini and Anthropic, against stubbed SDK clients through one shared contract. It covers text and structured-JSON calls, fail-safe results on refusal/block/truncation/malformed output, bounded backoff on rate limits (including Gemini's server-suggested retry delay and fail-fast on daily quotas), checker-only thinking config, and provider selection.
-
-The suite runs in GitHub Actions on every push (`.github/workflows/tests.yml`), needs no secrets, and costs nothing. The RAGAS eval is deliberately **not** part of it — see below.
+CI (`.github/workflows/tests.yml`) runs on every push against a `pgvector/pgvector:0.8.7-pg16` service container and fails if the Postgres tests would skip; it needs no secrets and caches the reranker model. Locally, set `TEST_POSTGRES_URL` to a pgvector database.
 
 ## API
 
 | Endpoint | Purpose |
 |---|---|
+| `POST /ask` | The reasoning engine: `{question}` → the answer, its plan and steps, citations, the validators' verdicts, `demo_today`, the stage `timeline`, LLM calls and `trace_id` |
 | `GET /documents` | Documents the caller can see, newest first |
-| `POST /query` | Full pipeline, single JSON response. Body: `{question, doc_ids?, department?, doc_type?, as_of?, all_versions?}`; omitting `doc_ids` searches every document the caller may see, in the version in force on `as_of` (default today). Returns `query_id` for feedback |
-| `POST /query/stream` | SSE: one `stage` event per completed node, then the verified answer as `token` events, then `citations` and `done` (which carries `query_id`) |
+| `POST /query`, `POST /query/stream` | The documents-only pipeline the chat still uses; removed when the chat moves to `/ask` (Phase 9) |
 | `POST /feedback` | `{query_id, thumbs_up, comment?}`: upserts the verdict for that query |
-| `GET /admin/logs` | Recent query logs of the admin's org |
-| `GET /admin/stats` | Outcome/route counts, feedback aggregates, per-stage latency percentiles |
+| `GET /admin/traces`, `GET /admin/traces/{id}` | Recent `/ask` traces of the admin's org (latency, LLM calls, estimated cost, outcome), and one with every span |
+| `GET /admin/logs`, `GET /admin/stats` | The query log and its aggregates |
 | `GET /me` | Who the token belongs to and whether they're set up |
 | `GET /health` | Liveness |
+
+From the command line, as a synthetic customer: `python -m engine.cli --customer cust-0036 "Can I afford $1,200 this month and stay above $500?"` (through `scripts/neon.py run`) prints the plan, steps, answer, citations, verdicts and where the time went.
 
 ## Free-tier limits
 

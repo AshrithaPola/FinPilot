@@ -19,10 +19,11 @@ backend/chroma_db/
 frontend/dist/
 frontend/node_modules/
 
-# eval outputs (regenerate with eval/run_eval.py)
-backend/eval/report.json
-backend/eval/report.md
 data/.cache/
 
 # Pages saved by hand from a browser (Investor.gov blocks scripts): public text, kept out of git like the fetch cache
 data/public/manual/
+
+# old eval outputs still on disk
+backend/eval/report.json
+backend/eval/report.md

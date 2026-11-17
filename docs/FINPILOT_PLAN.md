@@ -29,77 +29,80 @@ DocuMind's own history is in git, up to commit 51ba57a on `main`.
 ## Architecture checklist
 
 Every box of the target architecture, with the phase that builds it. A box
-is ticked only when its code is merged and tested.
+is ticked only when its code is on the branch and tested (audited 2026-11-16: each ticked
+box has an implementing file and a test in git).
 
 ### 1. Data sources (all four types)
 
-- [ ] **Documents**: the bank's policies, agreements, fee schedules (Markdown/PDF), CFPB and Investor.gov guidance, SEC 10-K Items 1A and 7, ETF prospectuses. *Phase 2 (corpus), Phase 3 (ingestion).*
-- [ ] **Spreadsheets**: the bank's rate tables (CSV and XLSX), fee tables. *Phase 2, Phase 3.*
-- [ ] **Images**: synthetic receipts and statement snippets, rendered from the generator's own transactions so the extracted fields can be checked exactly. *Phase 3.*
-- [ ] **Code**: the bank's OpenAPI spec (and its example requests), chunked by path and operation. *Phase 2, Phase 3.*
+- [ ] **Documents**: the bank's policies, agreements, fee schedules (Markdown/PDF), CFPB and Investor.gov guidance, SEC 10-K Items 1A and 7, ETF prospectuses. *Phase 2 (corpus), Phase 3 (ingestion).* **Partial:** Investor.gov blocks automated clients (HTTP 403), so its pages aren't loaded; everything else is, including one real PDF (the deposit agreement).
+- [x] **Spreadsheets**: the bank's rate tables (CSV and XLSX), fee tables. *Phase 2, Phase 3.*
+- [ ] **Images**: synthetic receipts and statement snippets, rendered from the generator's own transactions so the extracted fields can be checked exactly. *Phase 3.* **Partial:** receipts only, no statement snippets.
+- [x] **Code**: the bank's OpenAPI spec (and its example requests), chunked by path and operation. *Phase 2, Phase 3.*
 
 ### 2. Restructuring
 
-- [ ] **Noise removal**: headers, footers, page numbers, repeated legal boilerplate and navigation text stripped before chunking; the removed share is reported per document. *Phase 3.*
-- [ ] **Unstructured → structured: tables**: tables in documents (fee schedules, rate tables) become relational rows (`doc_tables`, `doc_table_rows`), each linked to the chunk it came from, so a calculation can cite its source. *Phase 3.*
-- [ ] **Unstructured → structured: images**: receipts and statement images become fields (merchant, date, amount, last-4) through **one Gemini vision call per image**, validated against the generator's ground truth and stored with a link to the image. *Phase 3.*
+- [x] **Noise removal**: headers, footers, page numbers, repeated legal boilerplate and navigation text stripped before chunking; the removed share is reported per document. *Phase 3.*
+- [x] **Unstructured → structured: tables**: tables in documents (fee schedules, rate tables) become relational rows (`doc_tables`, `doc_table_rows`), each linked to the chunk it came from, so a calculation can cite its source. *Phase 3.*
+- [x] **Unstructured → structured: images**: receipts and statement images become fields (merchant, date, amount, last-4) through **one Gemini vision call per image**, validated against the generator's ground truth and stored with a link to the image. *Phase 3.*
 
 ### 3. Chunking
 
-- [ ] **Structure-aware chunking, up to 512 tokens**: split on headings, sections, list items, table boundaries and OpenAPI operations; never mid-table; a chunk never crosses a section or holds two tables, so a small section stays a small chunk (merging it into the next one mixed topics); large sections split below 512. *Phase 3, rule changed in Phase 4.*
+- [x] **Structure-aware chunking, up to 512 tokens**: split on headings, sections, list items, table boundaries and OpenAPI operations; never mid-table; a chunk never crosses a section or holds two tables, so a small section stays a small chunk (merging it into the next one mixed topics); large sections split below 512. *Phase 3, rule changed in Phase 4.*
 
 ### 4. Chunk metadata
 
-- [ ] **Summary, keywords, hypothetical questions**: one LLM call per section (several chunks per call), cached by content hash. *Phase 3.*
-- [ ] **Version, effective date, department, document type**: from the corpus manifest, not the LLM. *Phase 3.*
+- [x] **Summary, keywords, hypothetical questions**: one LLM call per section (several chunks per call), cached by content hash. *Phase 3.*
+- [x] **Version, effective date, department, document type**: from the corpus manifest, not the LLM. *Phase 3.*
 
 ### 5. Storage: Neon
 
-- [ ] **Serverless Postgres + pgvector** on Neon. *Phase 4.*
-- [ ] **Metadata filters** in SQL (document type, department, version, effective date "as of" a date). *Phase 4.*
-- [ ] **Parent-document joins**: retrieve small chunks, return their parent section. *Phase 4.*
-- [ ] **One branching experiment**: a Neon branch holds a re-chunked or re-embedded index; the eval runs on both branches and the result is written up. *Phase 4.*
+- [x] **Serverless Postgres + pgvector** on Neon. *Phase 4.*
+- [x] **Metadata filters** in SQL (document type, department, version, effective date "as of" a date). *Phase 4.*
+- [ ] **Parent-document joins**: retrieve small chunks, return their parent section. *Phase 4.* **Partial:** built and tested (`PARENT_EXPANSION`), off by default until Phase 10 decides.
+- [x] **One branching experiment**: a Neon branch holds a re-chunked or re-embedded index; the eval runs on both branches and the result is written up. *Phase 4.*
 
 ### 6. Retrieval
 
-- [ ] **Hybrid search** (dense + full-text, RRF): exists, extended with the hypothetical-question index and the filters. *Phase 4.*
-- [ ] **Rerank**, behind a toggle, measured on and off: a local cross-encoder run through ONNX (fastembed's reranker), so torch isn't loaded. *Phase 4.*
+- [x] **Hybrid search** (dense + full-text, RRF): exists, extended with the hypothetical-question index and the filters. *Phase 4.*
+- [x] **Rerank**, behind a toggle, measured on and off: a local cross-encoder run through ONNX (fastembed's reranker), so torch isn't loaded. *Phase 4.*
 
 ### 7. Reasoning engine
 
-- [ ] **Planner**: one LLM call turns the question into a typed plan (which tools, which arguments). *Phase 6.*
-- [ ] **Tool execution**: plain code runs the plan's steps, under the caller's RLS context. *Phase 5 (tools), Phase 6 (executor).*
-- [ ] **Conditional router**: code, not an LLM, routes small talk, refusals, single-tool and multi-tool plans. *Phase 6.*
+- [x] **Planner**: one LLM call turns the question into a typed plan (which tools, which arguments). *Phase 6.*
+- [x] **Tool execution**: plain code runs the plan's steps, under the caller's RLS context. *Phase 5 (tools), Phase 6 (executor).*
+- [x] **Conditional router**: code, not an LLM, routes small talk, refusals, single-tool and multi-tool plans. *Phase 6.*
 
 ### 8. Agents (real, each a tool-backed step)
 
-- [ ] **Financial-data agent**: the customer's accounts, cards, transactions, fees, holdings (RLS-scoped), and market data (prices, FRED, SEC). *Phase 5.*
-- [ ] **Documents agent**: retrieval over the bank's documents and public guidance, with citations. *Phase 4–5.*
-- [ ] **Summarization agent**: condenses retrieved sections and tool results into the answer; this is the answer LLM call. *Phase 6.*
-- [ ] **Calculation agent**: deterministic arithmetic (fees, interest, balances, returns) in code, never in the LLM. *Phase 5.*
+- [ ] **Financial-data agent**: the customer's accounts, cards, transactions, fees, holdings (RLS-scoped), and market data (prices, FRED, SEC). *Phase 5.* **Partial:** prices are labelled synthetic and FRED rates are empty until the Alpha Vantage and FRED keys are set; SEC figures are real.
+- [x] **Documents agent**: retrieval over the bank's documents and public guidance, with citations. *Phase 4–5.*
+- [x] **Summarization agent**: condenses retrieved sections and tool results into the answer; this is the answer LLM call. *Phase 6.*
+- [x] **Calculation agent**: deterministic arithmetic (fees, interest, balances, returns) in code, never in the LLM. *Phase 5.*
 
 ### 9. Validation (one structured call)
 
-- [ ] **Gatekeeper**: is the question in scope, and does the answer reveal anything the caller may not see? *Phase 7.*
-- [ ] **Auditor**: is every claim supported by a cited chunk or tool result? *Phase 7.*
-- [ ] **Strategist**: is the answer complete and useful; if not, one targeted retry. *Phase 7.*
+- [x] **Gatekeeper**: does the answer answer the question that was asked (or say plainly what couldn't be found)? Scope is decided earlier, by the planner (out of scope: no steps) and the router. *Phase 7.*
+- [x] **Auditor**: is every claim, number and date supported by a cited chunk or tool result, with the as-of date stated when it differs from the date asked about? Code first checks every dollar amount and percentage against the evidence. *Phase 7.*
+- [x] **Strategist**: is the answer allowed and sensible for a bank: no investment, tax or legal advice, no money moved or promised, nothing about another customer (code also checks advice phrasing and other customers' ids)? *Phase 7.*
+
+All three are judged in one structured LLM call, after the code checks. Any failure regenerates the answer once with the reason; a second failure is refused with a clear message.
 
 ### 10. Observability
 
-- [ ] **Tracing**: every step (plan, tool, LLM call, validator verdict) with timings. *Phase 8.*
-- [ ] **Cost**: tokens and calls per question, per model. *Phase 8.*
+- [x] **Tracing**: every step (plan, tool, LLM call, validator verdict) with timings. *Phase 8.*
+- [x] **Cost**: tokens and calls per question, per model. *Phase 8.*
 
 ### 11. Evaluation
 
 - [ ] **LLM judges**: faithfulness, relevance, depth (one judge call per question returning all three). *Phase 10.*
-- [ ] **Retrieval precision and recall** on labelled chunks. *Phase 10.*
-- [ ] **Latency, tokens, cost** per question and per run. *Phase 10.*
-- [ ] **Feedback loop**: thumbs and comments feed a review queue that becomes new eval items. *Phase 10* (the feedback table exists).
+- [ ] **Retrieval precision and recall** on labelled chunks. *Phase 10.* **Partial:** recall@k and MRR on 19 labelled questions in the Phase 4 branch experiment; the full eval is Phase 10.
+- [ ] **Latency, tokens, cost** per question and per run. *Phase 10.* **Partial:** per question in every trace (Phase 8); the per-run report is Phase 10.
+- [ ] **Feedback loop**: thumbs and comments feed a review queue that becomes new eval items. *Phase 10* (the feedback table exists). **Partial:** thumbs and comments are stored (`/feedback`); the review queue is Phase 10.
 
 ### 12. Red-teaming
 
 - [ ] **Reasoning engine**: prompt injection in questions and in documents, plan hijacking, scope escape, validator evasion. *Phase 11.*
-- [ ] **Agents**: cross-customer access through tool arguments, staff-only canary extraction, calculation tampering, SQL-shaped inputs. *Phase 11.*
+- [ ] **Agents**: cross-customer access through tool arguments, staff-only canary extraction, calculation tampering, SQL-shaped inputs. *Phase 11.* **Partial:** the leakage check and the adversarial tool tests cover cross-customer access and the canary; the full red-team is Phase 11.
 
 ## Phases and commit budget
 

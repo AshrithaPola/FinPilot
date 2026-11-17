@@ -67,17 +67,3 @@ def test_fake_docx_rejected():
 def test_empty_txt_rejected():
     with pytest.raises(IngestionError, match="No extractable text"):
         validate_and_extract(b"   \n\t  ", "empty.txt", SETTINGS)
-
-
-def test_oversized_file_rejected():
-    small_limit = Settings(anthropic_api_key="x", max_upload_mb=1)
-    with pytest.raises(IngestionError, match="limit is 1 MB"):
-        validate_and_extract(b"x" * (2 * 1024 * 1024), "big.txt", small_limit)
-
-
-def test_type_check_applies_before_size_check():
-    # An oversized file with a bad extension reports the type error, not the
-    # size error — the user should fix the format before worrying about size.
-    small_limit = Settings(anthropic_api_key="x", max_upload_mb=1)
-    with pytest.raises(IngestionError, match="Unsupported file type"):
-        validate_and_extract(b"x" * (2 * 1024 * 1024), "big.exe", small_limit)

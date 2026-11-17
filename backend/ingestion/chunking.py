@@ -15,7 +15,7 @@ operations); this packs neighbouring blocks into chunks of up to 512 tokens:
     paragraph, line, then sentence boundaries.
   - An API operation is always a chunk of its own.
 
-chunk_pages (DocuMind's PDF path, kept for the eval tooling): pages split
+chunk_pages (page-based, for text with no structure): pages split
 independently at ~600 tokens with 15% overlap, so every chunk maps to
 exactly one page.
 """
