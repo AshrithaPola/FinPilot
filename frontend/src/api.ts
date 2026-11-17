@@ -14,6 +14,8 @@ export interface Me {
   role?: "viewer" | "editor" | "admin";
   clearance?: number;
   team_ids?: string[];
+  customer_id?: string | null;
+  demo_today?: string; // the synthetic data's last day: the assistant's "today"
 }
 
 // Called when any API call gets a 403, so AuthGate can re-check /me (the
@@ -44,29 +46,62 @@ export interface DocumentInfo {
   clearance?: number;
 }
 
-export interface Citation {
-  n: number;
-  chunk_id: string;
-  filename: string;
-  page_number: number;
-  snippet: string;
+// One piece of evidence an answer cites: a document passage or a tool result.
+export type Citation =
+  | { n: number; kind: "document"; step: string; chunk_id: string; filename: string; section: string; snippet: string }
+  | { n: number; kind: "tool"; step: string; tool: string; attribution: string | null };
+
+export interface PlanStep {
+  id: string;
+  agent: string;
+  tool: string;
+  arguments?: Record<string, unknown>;
+  purpose: string;
+  status?: "planned" | "done" | "failed";
+  error?: string | null;
+  evidence?: number[];
+  round?: number;
+  note?: string | null;
 }
 
-export interface StageEvent {
-  stage: string;
-  label: string;
-  detail: Record<string, unknown>;
+export interface Verdict {
+  passed: boolean;
+  reason: string;
+  by: "code" | "llm";
 }
 
-// Events emitted by POST /query/stream (SSE)
-export type StreamEvent =
-  | ({ type: "stage" } & StageEvent)
-  | { type: "token"; text: string }
-  | { type: "citations"; citations: Citation[] }
+// The finished answer: POST /ask's response, and the "done" event of /ask/stream.
+export interface AskResult {
+  answer: string;
+  outcome: string; // answered | small_talk | out_of_scope | nothing_found | uncited | refused_unverified
+  demo_today: string;
+  plan: { intent: string; steps: PlanStep[]; dropped: string[] } | null;
+  citations: Citation[];
+  validation: Record<"gatekeeper" | "auditor" | "strategist", Verdict>[];
+  llm_calls: number;
+  llm_calls_by_role: Record<string, number>;
+  timings: Record<string, number>;
+  timeline: { stage: string; start_ms: number; ms: number }[];
+  trace_id: string | null;
+  trace?: { est_cost_usd: number; llm_ms: number; search_ms: number; tools_ms: number; retries: number };
+  query_id: number | null; // null when the query log is off
+}
+
+// Events of POST /ask/stream (SSE). The answer arrives once, in "done",
+// after the validators passed it.
+export type AskEvent =
+  | { type: "plan"; round: number; intent: string; steps: PlanStep[] }
+  | { type: "stage"; stage: string; label: string; state: "start" | "done"; ms?: number }
   | {
-      type: "done";
-      outcome: string;
-      query_id: number | null; // null when backend logging is disabled
-      timings: Record<string, number>;
+      type: "step";
+      id: string;
+      label: string;
+      agent_tool: string;
+      round: number;
+      state: "start" | "done" | "failed";
+      ms?: number;
+      error?: string | null;
+      note?: string | null;
     }
-  | { type: "error"; message: string };
+  | ({ type: "done" } & AskResult)
+  | { type: "error"; kind: string; message: string; retryable: boolean };

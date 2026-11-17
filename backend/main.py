@@ -1,33 +1,26 @@
 """FinPilot API.
 
 Endpoints:
+    POST /ask           — the reasoning engine: plan, agents, one checked and cited answer
+    POST /ask/stream    — the same over SSE: the plan, each stage and step as it runs,
+                          then the answer (sent only after the validators pass it)
     GET  /documents     — documents the caller can see, newest first
-    POST /ask           — the reasoning engine: plan, agents, one cited answer
-    POST /query         — run the documents pipeline, return one JSON response
-    POST /query/stream  — same pipeline over SSE: stage events, then the
-                          verified answer, citations, and outcome
+    POST /feedback      — thumbs up/down on an answer (its query_id)
+    GET  /admin/traces  — recent /ask traces of the admin's org; /admin/traces/{id} one
     GET  /admin/logs    — recent query logs of the admin's org (admins only)
     GET  /admin/stats   — the same org's outcome counts + latency percentiles
     GET  /me            — who the token belongs to and whether they're set up
-    GET  /health        — liveness + index size
+    GET  /health        — liveness
 
 Every endpoint except /me and /health requires a signed-in, set-up user
 (auth.get_principal: 401 without a valid token, 403 if not set up); /admin/*
 also checks with Firebase that the token wasn't revoked.
-
-Streaming design note: the answer is only sent AFTER the groundedness check
-passes, so we cannot forward raw LLM tokens as they are produced (they might
-be retracted). Instead the SSE stream carries live per-stage progress events
-while the graph runs, then the verified answer. Trust-first over latency-first
-— that trade is deliberate and documented in the README.
 """
 import asyncio
 import json
 import logging
 import re
-import time
 from contextlib import asynccontextmanager
-from datetime import date
 from functools import partial
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -40,8 +33,6 @@ from config import get_settings
 from db import session as db
 import deps
 from deps import get_store
-from graph.pipeline import pipeline
-from ingestion.store import Filters
 from llm import classify_error, track_usage
 import tracing
 
@@ -82,113 +73,89 @@ app.add_middleware(
 )
 
 
-class QueryRequest(BaseModel):
-    question: str
-    # Documents to query. Omitted/empty -> every document the caller may see.
-    doc_ids: list[str] | None = None
-    # Metadata filters (ingestion.store.Filters). By default only the version
-    # of each document in force today; as_of picks another day, all_versions
-    # drops the version filter.
-    department: str | None = Field(default=None, max_length=100)
-    doc_type: str | None = Field(default=None, max_length=100)
-    as_of: date | None = None
-    all_versions: bool = False
-
-
 class FeedbackRequest(BaseModel):
     query_id: int
     thumbs_up: bool
     comment: str | None = Field(default=None, max_length=2000)
 
 
+class AskRequest(BaseModel):
+    question: str = Field(max_length=4000)  # input validation applies the real limit
+
+
 # --- helpers -------------------------------------------------------------------
 
+# What the customer sees when a request fails: no provider text, and whether
+# trying again can help. Timeouts and overloads are the free tier's normal
+# weather, not bugs.
+FRIENDLY_ERRORS = {
+    "timeout": ("The model is busy right now and didn't answer in time. Please try again.", True),
+    "unavailable": ("The model is busy right now. Please try again in a moment.", True),
+    "rate_limited": ("The model is busy right now. Please try again in a moment.", True),
+    "daily_quota": ("The model's free daily limit is used up. Please try again tomorrow.", False),
+    "internal": ("Something went wrong on our side while answering. Please try again.", True),
+}
 
-def _initial_state(request: QueryRequest, principal: Principal) -> dict:
-    filters = Filters(department=request.department, doc_type=request.doc_type,
-                      as_of=request.as_of, all_versions=request.all_versions)
-    return {"question": request.question, "doc_ids": request.doc_ids, "filters": filters,
-            "access": principal, "timings": {}}
+# The stage a customer sees for each engine node and agent (live, over SSE).
+NODE_LABELS = {"plan": "Planning", "replan": "Re-planning", "summarize": "Writing the answer",
+               "check": "Checking the answer"}
+AGENT_LABELS = {"documents": "Searching documents", "calculation": "Calculating"}
 
 
-def _merge_update(final: dict, delta: dict) -> None:
-    """Fold one node's partial update into our running copy of the state."""
-    for key, value in (delta or {}).items():
-        if key == "timings":
-            final.setdefault("timings", {}).update(value)
-        else:
-            final[key] = value
+def _step_label(agent_tool: str) -> str:
+    agent, _, tool = agent_tool.partition(".")
+    if agent == "financial_data":
+        from tools.market import TOOLS as MARKET_TOOLS
 
-
-def _db_record(request: QueryRequest, state: dict, total_ms: float,
-               principal: Principal) -> dict:
-    timings = state.get("timings", {})
-    redaction_categories = state.get("redaction_categories", [])
-    return {
-        "user_id": principal.user_id,
-        "org_id": principal.org_id,
-        # state["question"] is the REDACTED question (set by input_validation);
-        # the raw one must not reach the log. Fall back to the request only for
-        # crashes before validation ran.
-        "question": state.get("question", request.question),
-        "redacted": bool(redaction_categories),
-        "redaction_categories": redaction_categories or None,
-        "answer": state.get("answer") or state.get("rejection"),
-        "outcome": state.get("outcome", "error"),
-        "route": state.get("route"),
-        "doc_ids": state.get("scoped_doc_ids"),
-        "retrieved_chunks": [
-            {
-                "chunk_id": c["chunk_id"],
-                "page_number": c["page_number"],
-                "score": round(c["score"], 5),
-                "similarity": c["similarity"],
-                "dense_rank": c["dense_rank"],
-                "sparse_rank": c["sparse_rank"],
-            }
-            for c in state.get("chunks", [])
-        ],
-        "grade_relevant": state.get("grade_relevant"),
-        "grounded": state.get("grounded"),
-        "regenerated": state.get("regenerated", False),
-        "retrieval_ms": timings.get("retrieval_ms"),
-        "grading_ms": timings.get("grading_ms"),
-        "generation_ms": timings.get("generation_ms"),
-        "groundedness_ms": timings.get("groundedness_ms"),
-        "total_ms": total_ms,
-    }
+        return "Looking up market data" if tool in MARKET_TOOLS else "Looking up your accounts"
+    return AGENT_LABELS.get(agent, agent)
 
 
 def _sse(payload: dict) -> str:
-    return f"data: {json.dumps(payload)}\n\n"
+    return f"data: {json.dumps(payload, default=str)}\n\n"
 
 
-_STAGE_LABELS = {
-    "input_validation": "Validating question",
-    "route_query": "Routing",
-    "small_talk": "Replying",
-    "retrieve": "Retrieving relevant chunks",
-    "grade": "Grading relevance",
-    "generate": "Generating answer",
-    "groundedness_check": "Verifying groundedness",
-    "refuse": "No grounded answer",
-}
+def _log_record(result: dict, principal: Principal) -> dict:
+    """The /ask request as a query-log row (what feedback links to). The
+    question is the redacted one the engine saw."""
+    categories = result.get("redaction_categories") or []
+    return {"user_id": principal.user_id, "org_id": principal.org_id, "question": result.get("question", ""),
+            "redacted": bool(categories), "redaction_categories": categories or None,
+            "answer": result.get("answer"), "outcome": result.get("outcome", "error"), "route": "ask",
+            "regenerated": len(result.get("validation") or []) > 1,
+            "total_ms": result.get("timings", {}).get("total_ms")}
 
 
-def _stage_detail(node: str, delta: dict) -> dict:
-    """Small, safe-to-show facts about what each stage decided."""
-    if node == "input_validation":
-        # Category names only — never the redacted values themselves.
-        return {"redacted": delta.get("redaction_categories", [])}
-    if node == "retrieve":
-        return {"chunks": len(delta.get("chunks", []))}
-    if node == "grade":
-        return {"relevant": delta.get("grade_relevant")}
-    if node == "generate":
-        return {"retry": delta.get("regenerated", False)}
-    if node == "groundedness_check":
-        return {"grounded": delta.get("grounded")}
-    return {}
+class AskFailed(Exception):
+    def __init__(self, exc: Exception, kind: str, llm_usage: dict):
+        super().__init__(kind)
+        self.exc, self.kind, self.llm_usage = exc, kind, llm_usage
+
+
+async def _run_ask(question: str, principal: Principal, listener=None) -> dict:
+    """The engine for one question, traced and logged; the result carries
+    `query_id` (for feedback) and, for admins, the LLM usage. Raises
+    AskFailed with a provider-neutral kind when the engine fails."""
+    from engine.graph import answer
+    from graph.redaction import redact
+
+    with tracing.tracing(listener) as trace, track_usage() as llm_usage:
+        try:
+            result = await answer(question, principal)
+        except Exception as exc:
+            kind = classify_error(exc) or "internal"
+            failed = {"outcome": f"error: {kind}", "timings": {"total_ms": trace.elapsed_ms()}}
+            await _save_trace(trace, principal, failed, redact(question)[0])
+            raise AskFailed(exc, kind, llm_usage) from exc
+    result["trace"] = trace.totals()
+    await _save_trace(trace, principal, result, result.get("question", ""))
+    result["query_id"] = await asyncio.to_thread(partial(db.log_query, _log_record(result, principal),
+                                                         access=principal))
+    if principal.role == "admin":
+        result["llm_usage"] = llm_usage
+    for internal in ("question", "redaction_categories"):
+        result.pop(internal, None)
+    return result
 
 
 # --- endpoints -----------------------------------------------------------------
@@ -200,152 +167,98 @@ async def list_documents(principal: Principal = Depends(get_principal)):
     return {"documents": get_store().scoped(principal).list_documents()}
 
 
-def _pipeline_error(exc: Exception, llm_usage: dict, diagnostics: bool) -> JSONResponse:
-    """Structured failure for /query: which pipeline node failed and a
-    provider-neutral error kind (raw provider messages stay in the server
-    log). For admins (`diagnostics`) it also carries the full error text and
-    every LLM attempt the request made, so the eval report can record quota
-    ids and limits. LLM capacity errors are 503 (retry later); anything else
-    is 500."""
-    # LangGraph notes the failing node on the exception:
-    # "During task with name 'generate' and id '...'".
-    notes = " ".join(getattr(exc, "__notes__", []))
-    match = re.search(r"During task with name '(\w+)'", notes)
-    stage = match.group(1) if match else "pipeline"
-    kind = classify_error(exc)
-    logger.exception("Pipeline failed at %s (%s)", stage, kind or "internal")
-    content = {"detail": "Pipeline failed.", "stage": stage, "error": kind or "internal"}
+def _engine_error(failure: AskFailed, diagnostics: bool) -> JSONResponse:
+    """/ask's failure: which engine node failed, a provider-neutral kind and
+    a message fit to show (raw provider messages stay in the server log).
+    Admins (`diagnostics`) also get the full error text and every LLM
+    attempt. Model capacity errors are 503 (retry later); anything else 500."""
+    exc = failure.exc
+    # LangGraph notes the failing node: "During task with name 'plan' and id '...'".
+    match = re.search(r"During task with name '(\w+)'", " ".join(getattr(exc, "__notes__", [])))
+    stage = match.group(1) if match else "engine"
+    logger.exception("/ask failed at %s (%s)", stage, failure.kind, exc_info=exc)
+    message, retryable = FRIENDLY_ERRORS[failure.kind]
+    content = {"detail": message, "stage": stage, "error": failure.kind, "retryable": retryable}
     if diagnostics:
-        content |= {"message": f"{type(exc).__name__}: {exc}", "llm_usage": llm_usage}
-    return JSONResponse(status_code=503 if kind else 500, content=content)
-
-
-class AskRequest(BaseModel):
-    question: str = Field(max_length=4000)  # input validation applies the real limit
+        content |= {"diagnostic": f"{type(exc).__name__}: {exc}", "llm_usage": failure.llm_usage}
+    return JSONResponse(status_code=500 if failure.kind == "internal" else 503, content=content)
 
 
 @app.post("/ask")
 async def ask(request: AskRequest, principal: Principal = Depends(get_principal)):
-    """The reasoning engine (Phase 6): plan, run the agents as the caller, and
-    answer with citations, the plan and its steps, and the LLM calls made.
-    /query (documents only) stays until the Phase 9 UI moves to /ask."""
-    from engine.graph import answer
-
-    with tracing.tracing() as trace, track_usage() as llm_usage:
-        try:
-            result = await answer(request.question, principal)
-        except Exception as exc:
-            from graph.redaction import redact
-
-            failed = {"outcome": f"error: {classify_error(exc) or 'internal'}",
-                      "timings": {"total_ms": trace.elapsed_ms()}}
-            await _save_trace(trace, principal, failed, redact(request.question)[0])
-            return _pipeline_error(exc, llm_usage, diagnostics=principal.role == "admin")
-    result["trace"] = trace.totals()
-    await _save_trace(trace, principal, result, result.pop("question", ""))
+    """The reasoning engine: plan, run the agents as the caller, answer with
+    citations, check the answer. Returns the answer with its plan and steps,
+    citations, the validators' verdicts, the stage timeline, the LLM calls
+    and the trace id, and `query_id` for feedback."""
+    try:
+        result = await _run_ask(request.question, principal)
+    except AskFailed as failure:
+        return _engine_error(failure, diagnostics=principal.role == "admin")
     if result["outcome"] == "rejected_input":
         raise HTTPException(status_code=422, detail=result["answer"])
     return result
 
 
-@app.post("/query")
-async def query(request: QueryRequest, principal: Principal = Depends(get_principal)):
-    """Non-streaming variant — used by the eval harness and handy for curl."""
-    start = time.perf_counter()
-    with track_usage() as llm_usage:
+@app.post("/ask/stream")
+async def ask_stream(request: AskRequest, principal: Principal = Depends(get_principal)):
+    """/ask over SSE, so the UI shows progress while the engine works:
+
+        {"type": "plan", "round", "intent", "steps": [{id, agent, tool, purpose}]}
+        {"type": "stage", "stage", "label", "state": "start" | "done", "ms"?}
+        {"type": "step", "id", "label", "agent", "tool", "state": "start" | "done" | "failed", ...}
+        {"type": "done", ...the /ask response}
+        {"type": "error", "kind", "message", "retryable"}
+
+    The answer itself arrives once, in "done", after the validators passed it:
+    nothing unchecked is ever shown."""
+    queue: asyncio.Queue = asyncio.Queue()
+
+    def listen(event: dict) -> None:
+        if event.get("type") == "plan":
+            queue.put_nowait(event)
+            return
+        ending = event["phase"] == "end"
+        if event["kind"] == "node" and event["name"] in NODE_LABELS:
+            queue.put_nowait({"type": "stage", "stage": event["name"], "label": NODE_LABELS[event["name"]],
+                              "state": "done" if ending else "start", **({"ms": event["ms"]} if ending else {})})
+        elif event["kind"] == "step":
+            state = ("failed" if event.get("status") == "failed" else "done") if ending else "start"
+            step = {"type": "step", "id": event.get("step"), "label": _step_label(event["name"]),
+                    "agent_tool": event["name"], "round": event.get("round"), "state": state}
+            if ending:
+                step |= {"ms": event["ms"], "error": event.get("error"), "note": event.get("note")}
+            queue.put_nowait(step)
+
+    async def run() -> None:
         try:
-            state = await pipeline.ainvoke(_initial_state(request, principal))
-        except Exception as exc:
-            return _pipeline_error(exc, llm_usage, diagnostics=principal.role == "admin")
-    total_ms = round((time.perf_counter() - start) * 1000, 1)
-
-    query_id = await asyncio.to_thread(
-        partial(db.log_query, _db_record(request, state, total_ms, principal), access=principal)
-    )
-
-    if state.get("outcome") == "rejected_input":
-        raise HTTPException(status_code=422, detail=state["rejection"])
-
-    response = {
-        "query_id": query_id,
-        "answer": state.get("answer", ""),
-        "outcome": state.get("outcome", "error"),
-        "route": state.get("route"),
-        "doc_ids": state.get("scoped_doc_ids", []),
-        "citations": state.get("citations", []),
-        # Full chunk texts are returned so the eval harness can score
-        # context precision without re-querying the store.
-        "chunks": [
-            {
-                "chunk_id": c["chunk_id"],
-                "page_number": c["page_number"],
-                "text": c["text"],
-                "score": round(c["score"], 5),
-                "similarity": c["similarity"],
-            }
-            for c in state.get("chunks", [])
-        ],
-        "timings": {**state.get("timings", {}), "total_ms": total_ms},
-    }
-    if principal.role == "admin":
-        # Attempts per model and the full text of every failed attempt
-        # (retried ones included), for the eval report.
-        response["llm_usage"] = llm_usage
-    return response
-
-
-@app.post("/query/stream")
-async def query_stream(request: QueryRequest, principal: Principal = Depends(get_principal)):
-    async def event_stream():
-        start = time.perf_counter()
-        final: dict = {}
-        try:
-            async for update in pipeline.astream(
-                _initial_state(request, principal), stream_mode="updates"
-            ):
-                for node, delta in update.items():
-                    _merge_update(final, delta)
-                    yield _sse(
-                        {
-                            "type": "stage",
-                            "stage": node,
-                            "label": _STAGE_LABELS.get(node, node),
-                            "detail": _stage_detail(node, delta or {}),
-                        }
-                    )
-
-            total_ms = round((time.perf_counter() - start) * 1000, 1)
-            answer = final.get("answer") or final.get("rejection") or ""
-
-            # The answer is already verified; emit it in small chunks so the
-            # frontend renders progressively.
-            words = answer.split(" ")
-            for i in range(0, len(words), 8):
-                yield _sse({"type": "token", "text": " ".join(words[i : i + 8]) + (" " if i + 8 < len(words) else "")})
-
-            yield _sse({"type": "citations", "citations": final.get("citations", [])})
-
-            # Log BEFORE the done event so it can carry the query_id the
-            # feedback buttons need to reference this exchange.
-            query_id = await asyncio.to_thread(
-                partial(db.log_query, _db_record(request, final, total_ms, principal),
-                        access=principal)
-            )
-            yield _sse(
-                {
-                    "type": "done",
-                    "query_id": query_id,
-                    "outcome": final.get("outcome", "error"),
-                    "timings": {**final.get("timings", {}), "total_ms": total_ms},
-                }
-            )
+            result = await _run_ask(request.question, principal, listener=listen)
+        except AskFailed as failure:
+            logger.exception("/ask/stream failed (%s)", failure.kind, exc_info=failure.exc)
+            message, retryable = FRIENDLY_ERRORS[failure.kind]
+            queue.put_nowait({"type": "error", "kind": failure.kind, "message": message, "retryable": retryable})
         except Exception:
-            logger.exception("Pipeline failed")
-            yield _sse(
-                {"type": "error", "message": "Something went wrong running the pipeline."}
-            )
+            logger.exception("/ask/stream failed")
+            message, retryable = FRIENDLY_ERRORS["internal"]
+            queue.put_nowait({"type": "error", "kind": "internal", "message": message, "retryable": retryable})
+        else:
+            if result["outcome"] == "rejected_input":
+                queue.put_nowait({"type": "error", "kind": "rejected_input", "message": result["answer"],
+                                  "retryable": False})
+            else:
+                queue.put_nowait({"type": "done", **result})
+        finally:
+            queue.put_nowait(None)
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    async def events():
+        task = asyncio.create_task(run())
+        try:
+            while (event := await queue.get()) is not None:
+                yield _sse(event)
+        finally:
+            if not task.done():  # the client went away: stop spending model calls
+                task.cancel()
+
+    return StreamingResponse(events(), media_type="text/event-stream")
 
 
 @app.post("/feedback")
@@ -408,7 +321,9 @@ async def admin_stats(principal: Principal = Depends(get_admin_principal)):
 
 @app.get("/me")
 async def me(body: dict = Depends(get_me)):
-    return body
+    # The demo's "today" (the synthetic data's last day), so the UI can show
+    # it before the first question.
+    return {**body, "demo_today": get_settings().demo_today.isoformat()}
 
 
 @app.get("/health")

@@ -25,7 +25,7 @@ id/limit from the error is logged so the real free-tier numbers are visible.
 
 Usage tracking: inside `with track_usage() as usage:`, every attempt is
 counted per model and every failed attempt is kept with its full error text
-(including a 429's quota id and limit), so a caller such as /query can
+(including a 429's quota id and limit), so a caller such as /ask can
 report exactly what a request spent and what failed. Each successful call
 made with a `role` (grade, generate, groundedness) also records the
 provider's own token counts (prompt, output, thinking), per call and summed

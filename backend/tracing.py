@@ -47,8 +47,14 @@ def cost(model: str, prompt_tokens: int | None, output_tokens: int | None = 0,
     return round(((prompt_tokens or 0) * inp + ((output_tokens or 0) + (thinking_tokens or 0)) * out) / 1e6, 8)
 
 
+LIVE_KINDS = ("node", "step")  # spans a listener hears about as they start and end
+
+
 class Trace:
-    def __init__(self):
+    def __init__(self, listener=None):
+        # `listener(event)`, if given, hears each node and step as it starts
+        # and ends, and each notify(): /ask/stream turns them into SSE events.
+        self.listener = listener
         self.trace_id = str(uuid.uuid4())
         self.started_at = datetime.now(timezone.utc)
         self._t0 = time.perf_counter()
@@ -94,8 +100,8 @@ class Trace:
 
 
 @contextmanager
-def tracing():
-    trace = Trace()
+def tracing(listener=None):
+    trace = Trace(listener)
     token = _current.set(trace)
     try:
         yield trace
@@ -112,6 +118,9 @@ def span(kind: str, name: str, **details):
     """Time the block as one span; the caller may add details to the dict it
     gets. An exception is recorded on the span and re-raised."""
     trace, start = _current.get(), time.perf_counter()
+    live = trace is not None and trace.listener is not None and kind in LIVE_KINDS
+    if live:
+        trace.listener({"phase": "start", "kind": kind, "name": name, **details})
     try:
         yield details
     except BaseException as exc:
@@ -119,7 +128,16 @@ def span(kind: str, name: str, **details):
         raise
     finally:
         if trace is not None:
-            trace.add(kind, name, start, **details)
+            span = trace.add(kind, name, start, **details)
+            if live:
+                trace.listener({"phase": "end", **span})
+
+
+def notify(event: dict) -> None:
+    """Tell the request's listener something that isn't a span (the plan)."""
+    trace = _current.get()
+    if trace is not None and trace.listener is not None:
+        trace.listener(event)
 
 
 def save(engine: sa.Engine, access, trace: Trace, result: dict, *, user_id: str | None, question: str) -> None:

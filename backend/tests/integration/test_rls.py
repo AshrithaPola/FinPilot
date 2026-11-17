@@ -110,17 +110,18 @@ def test_documents_endpoint_lists_only_visible_documents(client, corpus):
     assert {d["doc_id"] for d in response.json()["documents"]} == VISIBLE
 
 
-@pytest.mark.parametrize("doc", HIDDEN)
-def test_query_retrieves_nothing_from_a_hidden_document(client, corpus, doc):
-    body = client.post("/query", headers=AS_VIEWER,
-                       json={"question": "What RPM does the pump run at?", "doc_ids": [doc]}).json()
-    assert body["chunks"] == [], HIDDEN[doc]
-
-
-def test_query_across_all_visible_documents(client, corpus):
-    body = client.post("/query", headers=AS_VIEWER,
-                       json={"question": "pump RPM", "doc_ids": list(CORPUS)}).json()
-    assert {c["chunk_id"].rsplit("-", 1)[0] for c in body["chunks"]} == VISIBLE
+def test_ask_searches_only_the_documents_the_viewer_may_see(client, corpus, app_env):
+    """/ask's documents agent, as the viewer: the evidence handed to the
+    summarizer holds the visible documents' chunks and none of the hidden."""
+    app_env.plan = {"intent": "x", "out_of_scope": False, "steps": [
+        {"id": "s1", "agent": "documents", "tool": "search", "arguments_json": '{"query": "pump RPM"}',
+         "purpose": "search"}]}
+    app_env.answer = "The pump runs at 400 RPM [1]."
+    response = client.post("/ask", headers=AS_VIEWER, json={"question": "What RPM does the pump run at?"})
+    assert response.status_code == 200, response.text
+    [evidence] = [c["user"] for c in app_env.chat_calls if c["role"] == "summarizer"]
+    assert all(f"Document {doc}.txt" in evidence for doc in VISIBLE)
+    assert not [doc for doc in HIDDEN if f"Document {doc}.txt" in evidence]
 
 
 # --- finpilot_app can't get around the policy ---------------------------------
@@ -254,21 +255,3 @@ def test_app_role_password_with_quotes_and_percent_signs_is_set_safely(pg_url, a
     finally:  # restore the password the rest of the suite uses
         db_session.migrate_database(Settings(_env_file=None, database_url=app_url,
                                              migration_database_url=pg_url, embedding_dimensions=32))
-
-
-def test_bench_runs_under_rls_as_its_own_org(pg_url, app_url, monkeypatch):
-    import sys
-    from pathlib import Path
-
-    from config import Settings
-    from db import session as db_session
-
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "eval"))
-    import bench_retrieval
-
-    monkeypatch.setattr("embeddings.build_embeddings", lambda settings: FakeEmbeddings())
-    store = bench_retrieval.build_store(Settings(_env_file=None, database_url=app_url,
-                                                 migration_database_url=pg_url,
-                                                 embedding_dimensions=32))
-    assert store._access.org_id == bench_retrieval.BENCH_ORG
-    assert store.count() == 0

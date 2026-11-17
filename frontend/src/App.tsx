@@ -27,8 +27,6 @@ export default function App() {
 
 function Workspace({ me, user, onSignOut }: { me: Me; user: User; onSignOut: () => void }) {
   const [documents, setDocuments] = useState<DocumentInfo[]>([]);
-  // Empty selection = default scope (every document you can see, current versions).
-  const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
 
   useEffect(() => {
     // setState only in the async callback, never in the effect body; skipped
@@ -42,44 +40,27 @@ function Workspace({ me, user, onSignOut }: { me: Me; user: User; onSignOut: () 
     };
   }, []);
 
-  function toggleDoc(docId: string) {
-    setSelectedDocIds((prev) =>
-      prev.includes(docId) ? prev.filter((d) => d !== docId) : [...prev, docId]
-    );
-  }
-
   return (
     <div className="app">
       <header className="app-header">
         <h1>FinPilot</h1>
         <span className="tagline">Your banking assistant</span>
         <span className="user-badge" title={`Org ${me.org_id}, clearance ${me.clearance}`}>
-          {user.email} · {me.role}
+          {user.email} · {me.customer_id ? "customer" : me.role}
         </span>
         <button className="link-btn" onClick={onSignOut}>Sign out</button>
       </header>
 
       <main className="app-main">
-        <DocumentList
-          documents={documents}
-          selectedDocIds={selectedDocIds}
-          onToggleDoc={toggleDoc}
-        />
-        <Chat docIds={selectedDocIds} />
+        <DocumentList documents={documents} />
+        <Chat isCustomer={!!me.customer_id} demoToday={me.demo_today} />
       </main>
     </div>
   );
 }
 
-function DocumentList({
-  documents,
-  selectedDocIds,
-  onToggleDoc,
-}: {
-  documents: DocumentInfo[];
-  selectedDocIds: string[];
-  onToggleDoc: (docId: string) => void;
-}) {
+/** What the assistant can read for this user (row-level security decides). */
+function DocumentList({ documents }: { documents: DocumentInfo[] }) {
   return (
     <div className="upload-panel">
       <h2>Documents</h2>
@@ -87,27 +68,13 @@ function DocumentList({
         <p className="doc-hint">No documents loaded yet.</p>
       ) : (
         <div className="doc-list">
-          <p className="doc-hint">
-            {selectedDocIds.length === 0
-              ? "Questions search every document you can see. Tick boxes to narrow it."
-              : `Questions go to ${selectedDocIds.length} selected document${
-                  selectedDocIds.length > 1 ? "s" : ""
-                }.`}
-          </p>
-          {documents.map((doc, i) => (
-            <label key={doc.doc_id} className="doc-item">
-              <input
-                type="checkbox"
-                checked={selectedDocIds.includes(doc.doc_id)}
-                onChange={() => onToggleDoc(doc.doc_id)}
-              />
+          <p className="doc-hint">The documents FinPilot can read for you, in the version in force.</p>
+          {documents.map((doc) => (
+            <div key={doc.doc_id} className="doc-item">
               <span className="doc-name" title={doc.filename}>
-                {doc.filename}
+                {doc.filename.replace(/^public\//, "")}
               </span>
-              {selectedDocIds.length === 0 && i === 0 && (
-                <span className="doc-default">default</span>
-              )}
-            </label>
+            </div>
           ))}
         </div>
       )}

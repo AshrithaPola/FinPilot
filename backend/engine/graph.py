@@ -40,7 +40,7 @@ from deps import get_accounts_tools, get_llm, get_market_tools, get_store
 from engine.checks import VALIDATOR_SCHEMA, VALIDATOR_SYSTEM, VALIDATORS, code_checks, verdict_from
 from engine.executor import Executor
 from engine.plan import PLAN_SCHEMA, REPLAN_SYSTEM, Plan, parse_plan, planner_prompt
-from graph.nodes import input_validation_node
+from graph.redaction import redact
 from graph.routing import SMALL_TALK_RESPONSE, is_small_talk
 from llm import track_usage
 import tracing
@@ -117,7 +117,25 @@ def _timed(state: EngineState, key: str, start: float) -> dict:
 
 
 async def validate_node(state: EngineState) -> dict:
-    return await input_validation_node(state)
+    """Empty or too long: rejected. PII is masked here, at the front door, so
+    every later consumer (the LLM calls, the log, the trace) sees only the
+    redacted question."""
+    question = (state.get("question") or "").strip()
+    if not question:
+        return {"rejection": "Question is empty.", "outcome": "rejected_input"}
+    question, categories = redact(question)
+    update: dict = {"question": question, "redaction_categories": categories}
+    limit = get_settings().max_query_chars
+    if len(question) > limit:
+        update |= {"rejection": f"Question is too long ({len(question)} characters); the limit is {limit}.",
+                   "outcome": "rejected_input"}
+    return update
+
+
+def _plan_event(plan: Plan, round_: int) -> dict:
+    return {"type": "plan", "round": round_, "intent": plan.intent,
+            "steps": [{"id": s.id, "agent": s.agent, "tool": s.tool, "purpose": s.purpose}
+                      for s in plan.steps if s.round == round_]}
 
 
 async def route_node(state: EngineState) -> dict:
@@ -131,7 +149,9 @@ async def plan_node(state: EngineState) -> dict:
     reply = await get_llm().complete_json(
         get_settings().grading_model, _planner_system(),
         f"Today is {_today()}.\nQuestion: {state['question']}", PLAN_SCHEMA, max_tokens=2048, role="planner")
-    return {"plan": parse_plan(reply), "llm_calls": state.get("llm_calls", []) + ["planner"],
+    plan = parse_plan(reply)
+    tracing.notify(_plan_event(plan, 1))
+    return {"plan": plan, "llm_calls": state.get("llm_calls", []) + ["planner"],
             "timings": _timed(state, "plan_ms", start)}
 
 
@@ -178,6 +198,7 @@ async def replan_node(state: EngineState) -> dict:
     extra = parse_plan(reply, taken={s.id for s in plan.steps}, round_=2)
     plan.steps += extra.steps
     plan.dropped += extra.dropped
+    tracing.notify(_plan_event(plan, 2))
     return {"plan": plan, "replanned": True, "llm_calls": state.get("llm_calls", []) + ["replanner"],
             "timings": _timed(state, "replan_ms", start)}
 
@@ -334,4 +355,5 @@ async def answer(question: str, principal) -> dict:
         "timeline": trace.timeline() if trace else [],
         "trace_id": trace.trace_id if trace else None,
         "question": state.get("question", ""),  # as the engine saw it: redacted
+        "redaction_categories": state.get("redaction_categories", []),
     }

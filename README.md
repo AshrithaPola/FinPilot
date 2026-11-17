@@ -2,7 +2,7 @@
 
 A banking assistant for the customers of a fictional bank. It answers from the customer's own data (accounts, balances, cards, transactions, fees, holdings), the bank's documents (fee schedules, policies, agreements, rate tables, its API spec) and public market and regulatory data. Every answer is planned, run through tools as the signed-in customer, checked, and traced.
 
-**Status: Phases 0 to 8 of 12 are built** (data, ingestion, Neon, tools, the reasoning engine, validation, tracing). Next: the chat UI (Phase 9), evaluation (10), red-teaming (11), deployment (12). The plan and its architecture checklist are in [docs/FINPILOT_PLAN.md](docs/FINPILOT_PLAN.md); what each commit did, with measurements and design decisions, is in [docs/PROGRESS.md](docs/PROGRESS.md). FinPilot grew out of an earlier document-QA project; its retrieval core and access model carried over.
+**Status: Phases 0 to 9 of 12 are built** (data, ingestion, Neon, tools, the reasoning engine, validation, tracing, the chat UI). Next: evaluation (10), red-teaming (11), deployment (12). The plan and its architecture checklist are in [docs/FINPILOT_PLAN.md](docs/FINPILOT_PLAN.md); what each commit did, with measurements and design decisions, is in [docs/PROGRESS.md](docs/PROGRESS.md). FinPilot grew out of an earlier document-QA project; its retrieval core and access model carried over.
 
 ## How a question is answered
 
@@ -155,8 +155,8 @@ CI (`.github/workflows/tests.yml`) runs on every push against a `pgvector/pgvect
 |---|---|
 | `POST /ask` | The reasoning engine: `{question}` → the answer, its plan and steps, citations, the validators' verdicts, `demo_today`, the stage `timeline`, LLM calls and `trace_id` |
 | `GET /documents` | Documents the caller can see, newest first |
-| `POST /query`, `POST /query/stream` | The documents-only pipeline the chat still uses; removed when the chat moves to `/ask` (Phase 9) |
-| `POST /feedback` | `{query_id, thumbs_up, comment?}`: upserts the verdict for that query |
+| `POST /ask/stream` | `/ask` over server-sent events, for the chat: the plan, each stage and step as it starts and ends, then the answer once the validators passed it (`done`), or a friendly `error` with whether retrying can help |
+| `POST /feedback` | `{query_id, thumbs_up, comment?}`: upserts the verdict on an answer (`/ask` returns its `query_id`) |
 | `GET /admin/traces`, `GET /admin/traces/{id}` | Recent `/ask` traces of the admin's org (latency, LLM calls, estimated cost, outcome), and one with every span |
 | `GET /admin/logs`, `GET /admin/stats` | The query log and its aggregates |
 | `GET /me` | Who the token belongs to and whether they're set up |

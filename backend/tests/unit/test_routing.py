@@ -1,7 +1,6 @@
 """Query routing classification: small talk vs. real document questions."""
 import pytest
 
-from graph.nodes import route_after_routing, route_query_node
 from graph.routing import is_small_talk
 
 SMALL_TALK = [
@@ -50,15 +49,3 @@ def test_document_questions_pass_through(question):
     # False positives are the costly error here — a real question must never
     # be answered with the canned small-talk response.
     assert not is_small_talk(question)
-
-
-async def test_route_node_sets_direct_route():
-    update = await route_query_node({"question": "hello!"})
-    assert update == {"route": "routed_direct"}
-    assert route_after_routing(update) == "small_talk"
-
-
-async def test_route_node_sets_pipeline_route():
-    update = await route_query_node({"question": "What is the refund policy?"})
-    assert update == {"route": "full_pipeline"}
-    assert route_after_routing(update) == "retrieve"

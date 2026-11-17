@@ -12,8 +12,7 @@ from tests.conftest import TEST_ORG, TEST_UID
 PROTECTED = [
     ("get", "/documents", {}),
     ("post", "/ask", {"json": {"question": "hi"}}),
-    ("post", "/query", {"json": {"question": "hi"}}),
-    ("post", "/query/stream", {"json": {"question": "hi"}}),
+    ("post", "/ask/stream", {"json": {"question": "hi"}}),
     ("post", "/feedback", {"json": {"query_id": 1, "thumbs_up": True}}),
     ("get", "/admin/logs", {}),
     ("get", "/admin/stats", {}),

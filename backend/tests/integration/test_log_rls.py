@@ -45,7 +45,7 @@ def users(client, owner):
 
 
 def _ask(client, uid, question="What RPM do the cooling pumps run at?"):
-    response = client.post("/query", headers=_as(uid), json={"question": question})
+    response = client.post("/ask", headers=_as(uid), json={"question": question})
     assert response.status_code == 200, response.text
     return response.json()
 

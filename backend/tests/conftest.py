@@ -24,7 +24,6 @@ import config
 import deps
 from db import session as db_session
 from engine import graph as engine_graph
-from graph import nodes
 from tests.helpers import FakeEmbeddings, FakeLLM, FakeTokenChecker
 
 TEST_ORG = "org-test"
@@ -77,12 +76,11 @@ def app_env(pg_url, app_url, monkeypatch, fake_llm, token_checker):
     deps.get_accounts_tools.cache_clear()  # they hold the store's engine
     deps.get_market_tools.cache_clear()
 
-    # Both the graph nodes (get_llm) and the store factory (get_embeddings)
+    # Both the engine (get_llm) and the store factory (get_embeddings)
     # must see the fakes. Embedder activity is mirrored onto the FakeLLM so
     # tests can assert "zero model traffic" via one object.
     embeddings = FakeEmbeddings(record_into=fake_llm.embed_calls)
     monkeypatch.setattr(deps, "get_llm", lambda: fake_llm)
-    monkeypatch.setattr(nodes, "get_llm", lambda: fake_llm)
     monkeypatch.setattr(engine_graph, "get_llm", lambda: fake_llm)
     monkeypatch.setattr(deps, "get_embeddings", lambda: embeddings)
     monkeypatch.setattr(deps, "get_token_checker", lambda: token_checker)

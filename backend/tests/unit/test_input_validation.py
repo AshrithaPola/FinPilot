@@ -1,8 +1,8 @@
-"""Input validation node: empty / oversized / normal, and PII redaction there."""
+"""The engine's input validation: empty / oversized / normal, and PII redaction there."""
 import pytest
 
 import config
-from graph.nodes import input_validation_node, route_after_validation
+from engine.graph import validate_node as input_validation_node
 
 
 @pytest.fixture(autouse=True)
@@ -17,7 +17,6 @@ async def test_empty_question_rejected():
     update = await input_validation_node({"question": "   "})
     assert update["outcome"] == "rejected_input"
     assert update["rejection"] == "Question is empty."
-    assert route_after_validation(update) == "__end__"
 
 
 async def test_missing_question_rejected():
@@ -34,10 +33,9 @@ async def test_oversized_question_rejected():
 
 async def test_normal_question_passes_to_routing():
     update = await input_validation_node({"question": "  What is the policy?  "})
-    assert update["rejection"] is None
+    assert "rejection" not in update
     assert update["question"] == "What is the policy?"
     assert update["redaction_categories"] == []
-    assert route_after_validation(update) == "route_query"
 
 
 async def test_question_with_pii_is_redacted_before_anything_else():

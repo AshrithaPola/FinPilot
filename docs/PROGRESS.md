@@ -5,7 +5,7 @@ The plan, the architecture checklist and the commit budget are in
 enterprise build, its eval baselines and decisions) is in git history: see
 `docs/PROGRESS.md` at commit 51ba57a.
 
-**Commits: 25 of 28** (budget raised to 24 and then 25 on 2026-11-14, to 26 on 2026-11-16, and to 28 the same day: clean commits matter more than the count) (budget decided 2026-11-13; the Compose-name chore is outside it).
+**Commits: 26 of 28** (budget raised to 24 and then 25 on 2026-11-14, to 26 on 2026-11-16, and to 28 the same day: clean commits matter more than the count) (budget decided 2026-11-13; the Compose-name chore is outside it).
 
 ## Chores outside the phase budget
 
@@ -1028,6 +1028,59 @@ Three deliberately vague questions on Neon (cust-0036), traced:
 - **Neon still holds the Markdown version** of the agreement. Reloading it
   as the PDF costs Gemini calls (metadata and embeddings for its chunks),
   so it waits for the 2 GB memory floor.
+
+## Phase 9: the chat UI
+
+| # | Commit | What |
+|---|---|---|
+| 1 | this commit | `/ask/stream` (live stages and steps), the chat on `/ask`, the old `/query` pipeline deleted, friendly retryable errors |
+
+### Notes
+
+- **`POST /ask/stream`** (SSE) runs the same engine as `/ask` and sends:
+  - the plan as soon as the planner returns it (again after a re-plan);
+  - each stage as it starts and ends: Planning, Re-planning, Writing the
+    answer, Checking the answer;
+  - each step as it starts and ends, labelled by agent: Searching
+    documents, Looking up your accounts, Looking up market data,
+    Calculating (with its time, and the documents agent's rewrite note);
+  - the answer once, in `done`, after the validators passed it. Nothing
+    unchecked is ever shown.
+
+  The events come from the trace: a listener on the request's trace hears
+  each node and step span start and end, so there's one source of truth
+  for timings. If the browser goes away, the engine task is cancelled.
+- **Errors are a message, not a stack trace.** A model timeout, overload
+  or rate limit becomes "The model is busy right now…" with
+  `retryable: true`, and the chat shows a **Try again** button that resends
+  the question. A used-up daily quota says to try tomorrow (no retry
+  button). A question that fails validation (too long) is an error event
+  with the reason. `/ask` itself returns the same `detail`, `error` and
+  `retryable`; provider text goes to admins only (`diagnostic`).
+- **`/ask` is now logged** in `query_logs` (route `ask`, the redacted
+  question, answer, outcome, whether it regenerated), so feedback links to
+  an answer through its `query_id`, and `/admin/logs` and `/admin/stats`
+  keep working.
+- **Deleted:** `/query`, `/query/stream`, `graph/pipeline.py`,
+  `graph/nodes.py` and `graph/state.py` (DocuMind's fixed retrieve, grade,
+  generate, groundedness pipeline). Input validation moved into the engine
+  (`engine/graph.py validate_node`, same rules: empty, too long, PII
+  masked first). PII redaction and the small-talk rule stay in
+  `graph/redaction.py` and `graph/routing.py`. One behaviour not carried
+  over: the old pipeline also masked PII inside retrieved passages; the
+  engine doesn't, because the bank's own documents carry its phone numbers
+  and addresses, which answers need.
+- **The chat:** it shows the demo date ("Today is June 30, 2026 (demo
+  date)", from `/me`), example questions to click (customer or staff),
+  the live progress chips, the answer with its sources (document ›
+  section, or the tool and its attribution), the outcome when it isn't an
+  answer, the time and model calls, and thumbs up/down. The document list
+  is now read-only: `/ask` decides what to search, so the old per-document
+  scoping went with `/query`.
+- **Not run in a browser here:** this machine runs no Postgres or Docker,
+  so the UI was checked with the type checker, lint and build, and the
+  stream with the integration tests (`test_ask_flow.py`: event order, the
+  answer after the check, the friendly timeout, admin diagnostics).
 
 ## Phase 10 notes (from 2026-11-14)
 
