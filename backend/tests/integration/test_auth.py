@@ -94,7 +94,8 @@ def test_me_answers_any_valid_token(client, sql):
     for uid, reason in (("stranger", "unknown_user"), ("no-org", "no_org"), ("off", "inactive")):
         response = client.get("/me", headers=_as(uid))
         assert response.status_code == 200
-        assert response.json() == {"firebase_uid": uid, "set_up": False, "reason": reason}
+        assert response.json() == {"firebase_uid": uid, "set_up": False, "reason": reason,
+                                   "demo_today": "2026-06-30"}
 
 
 def test_me_for_a_set_up_user_lists_org_role_clearance_and_teams(client, sql):
@@ -107,7 +108,7 @@ def test_me_for_a_set_up_user_lists_org_role_clearance_and_teams(client, sql):
     assert body.pop("user_id")
     assert body == {"firebase_uid": TEST_UID, "set_up": True, "reason": None, "org_id": TEST_ORG,
                     "role": "admin", "clearance": 0, "team_ids": ["t1", "t2"],
-                    "customer_id": None}
+                    "customer_id": None, "demo_today": "2026-06-30"}
 
 
 def test_me_still_needs_a_valid_token(client):
