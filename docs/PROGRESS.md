@@ -5,7 +5,7 @@ The plan, the architecture checklist and the commit budget are in
 enterprise build, its eval baselines and decisions) is in git history: see
 `docs/PROGRESS.md` at commit 51ba57a.
 
-**Commits: 26 of 28** (budget raised to 24 and then 25 on 2026-11-14, to 26 on 2026-11-16, and to 28 the same day: clean commits matter more than the count) (budget decided 2026-11-13; the Compose-name chore is outside it).
+**Commits: 27 of 28** (budget raised to 24 and then 25 on 2026-11-14, to 26 on 2026-11-16, and to 28 the same day: clean commits matter more than the count) (budget decided 2026-11-13; the Compose-name chore is outside it).
 
 ## Chores outside the phase budget
 
@@ -1033,7 +1033,8 @@ Three deliberately vague questions on Neon (cust-0036), traced:
 
 | # | Commit | What |
 |---|---|---|
-| 1 | this commit | `/ask/stream` (live stages and steps), the chat on `/ask`, the old `/query` pipeline deleted, friendly retryable errors |
+| 1 | 0c8a244 | `/ask/stream` (live stages and steps), the chat on `/ask`, the old `/query` pipeline deleted, friendly retryable errors |
+| 2 | this commit | The "How I got this" panel under each answer |
 
 ### Notes
 
@@ -1077,6 +1078,21 @@ Three deliberately vague questions on Neon (cust-0036), traced:
   answer, the time and model calls, and thumbs up/down. The document list
   is now read-only: `/ask` decides what to search, so the old per-document
   scoping went with `/query`.
+- **"How I got this"** (`frontend/src/HowIGotThis.tsx`), folded under every
+  answer that ran a plan:
+  - the plan's intent and each step: agent, tool, purpose, arguments,
+    status, the evidence numbers it produced, the rewrite note, a failed
+    step's error, re-plan steps marked;
+  - the checks the answer passed, in plain words, each marked "checked
+    in code" or "checked by the model", with the reason for any failure
+    and both attempts when it was rewritten;
+  - where the time went: a bar per stage on one time axis, then the split
+    between the language model, document search and the customer's data,
+    and any retries while the model was busy;
+  - the model calls by role, the estimated cost at list price, and the
+    trace id (for an admin's `/admin/traces/{id}`).
+
+  Everything comes from the `/ask` result: no extra request.
 - **Not run in a browser here:** this machine runs no Postgres or Docker,
   so the UI was checked with the type checker, lint and build, and the
   stream with the integration tests (`test_ask_flow.py`: event order, the

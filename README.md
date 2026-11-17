@@ -25,7 +25,7 @@ POST /ask ── validate (PII masked) ── route (small talk: no model)
                END          the answer, plan, steps, citations, verdicts, LLM calls, trace id
 ```
 
-A typical question takes three LLM calls. The rewrite, the re-plan and the regeneration fire only when needed. Every request is stored as a trace (each stage, step, tool call, search, LLM and embedding call with tokens and estimated cost, retries, verdicts) under row-level security.
+The chat (`frontend/`) streams these stages as they happen and folds a "How I got this" panel under each answer: the plan and its steps, the checks it passed and who decided (code or the model), a timeline of where the time went, and the model calls. A typical question takes three LLM calls. The rewrite, the re-plan and the regeneration fire only when needed. Every request is stored as a trace (each stage, step, tool call, search, LLM and embedding call with tokens and estimated cost, retries, verdicts) under row-level security.
 
 ## What's built
 

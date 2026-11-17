@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { apiFetch, type AskEvent, type AskResult, type Citation } from "./api";
+import HowIGotThis from "./HowIGotThis";
 
 // One line of live progress: an engine stage or an agent step.
 interface Progress {
@@ -322,6 +323,8 @@ export default function Chat({ isCustomer, demoToday }: Props) {
                     {result.llm_calls === 1 ? "" : "s"}
                   </span>
                 )}
+
+                {result && (result.plan?.steps.length ?? 0) > 0 && <HowIGotThis result={result} />}
 
                 {result && result.query_id != null && (
                   <FeedbackControl key={result.query_id} queryId={result.query_id} />

@@ -493,3 +493,29 @@ body {
   border-radius: var(--radius); padding: 8px 12px; font-size: 13px; cursor: pointer; max-width: 460px;
 }
 .example:hover:not(:disabled) { border-color: var(--accent); }
+
+/* --- "How I got this" (Phase 9) --- */
+.hig { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; font-size: 13px; }
+.hig summary { cursor: pointer; color: var(--accent-hover); user-select: none; }
+.hig section { margin-top: 10px; }
+.hig h4 { margin: 0 0 6px; font-size: 13px; color: var(--text); }
+.hig ul, .hig ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.hig-step, .hig-checks li { display: flex; gap: 8px; align-items: flex-start; }
+.hig-mark { width: 14px; flex-shrink: 0; }
+.hig .done > .hig-mark { color: var(--success); }
+.hig .failed > .hig-mark { color: var(--error); }
+.hig-muted { color: var(--muted); }
+.hig-error { color: var(--error); }
+.hig-tag {
+  margin-left: 6px; padding: 1px 6px; border-radius: 6px; font-size: 11px;
+  background: rgba(99, 102, 241, 0.15); color: var(--muted);
+}
+.hig-evidence { color: var(--muted); }
+.hig-args { display: block; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.hig-timeline { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }
+.hig-bar-row { display: grid; grid-template-columns: 120px 1fr 48px; gap: 8px; align-items: center; }
+.hig-bar-label { color: var(--muted); }
+.hig-bar-track { position: relative; height: 8px; background: var(--surface); border-radius: 4px; }
+.hig-bar { position: absolute; top: 0; height: 8px; background: var(--accent); border-radius: 4px; }
+.hig-bar-ms { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+.hig-id { font-size: 11px; margin-top: 4px; }
