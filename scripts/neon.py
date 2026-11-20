@@ -2,6 +2,7 @@
 
     backend/.venv/Scripts/python scripts/neon.py setup
     backend/.venv/Scripts/python scripts/neon.py run -- python -m bank.corpus load
+    backend/.venv/Scripts/python scripts/neon.py serve              # the API on :8000, as finpilot_app
     backend/.venv/Scripts/python scripts/neon.py --branch setup     # the Neon branch
     backend/.venv/Scripts/python scripts/neon.py --branch run -- python -m eval.branch_experiment run
 
@@ -14,7 +15,9 @@ migrates the schema, creates finpilot_app and sets that password.
 `run` maps the Neon URLs onto the names the code reads
 (MIGRATION_DATABASE_URL = owner, DATABASE_URL = finpilot_app) and runs the
 command in backend/. Neon's postgresql+psycopg:// scheme is handled by
-config.sqlalchemy_url.
+config.sqlalchemy_url. `serve` runs the API (uvicorn, port 8000) with
+DATABASE_URL alone: the backend refuses to start with the owner URL in its
+environment, so serving never gets it.
 """
 import secrets
 import subprocess
@@ -59,7 +62,7 @@ def ensure_app_url() -> None:
     print("Added NEON_APP_DATABASE_URL to .env (finpilot_app, new random password).")
 
 
-def run(command: list[str], branch: bool = False) -> int:
+def run(command: list[str], branch: bool = False, owner_too: bool = True) -> int:
     import os
 
     values = _values()
@@ -69,7 +72,14 @@ def run(command: list[str], branch: bool = False) -> int:
         print(f".env lacks {', '.join(missing)} (run `neon.py setup` first for the app URL).", file=sys.stderr)
         return 2
     owner, app = _urls(branch)
-    env = dict(os.environ, MIGRATION_DATABASE_URL=owner, DATABASE_URL=app)
+    env = dict(os.environ, DATABASE_URL=app)
+    env.pop("MIGRATION_DATABASE_URL", None)
+    if owner_too:
+        env["MIGRATION_DATABASE_URL"] = owner
+    else:  # serving: the Firebase SDK reads its key path from the environment, as docker-compose sets it
+        key = values.get("GOOGLE_APPLICATION_CREDENTIALS")
+        if key and not env.get("GOOGLE_APPLICATION_CREDENTIALS"):
+            env["GOOGLE_APPLICATION_CREDENTIALS"] = key
     if command[0] == "python":  # this interpreter (the venv), found the same way on every OS
         command = [sys.executable, *command[1:]]
     return subprocess.call(command, env=env, cwd=BACKEND)
@@ -83,6 +93,8 @@ def main() -> int:
         if not branch:
             ensure_app_url()
         return run(["python", "migrate.py"], branch)
+    if args[:1] == ["serve"]:
+        return run(["python", "-m", "uvicorn", "main:app", "--port", "8000", *args[1:]], branch, owner_too=False)
     if args[:1] == ["run"] and len(args) > 1:
         return run(args[2:] if args[1] == "--" else args[1:], branch)
     print(__doc__, file=sys.stderr)

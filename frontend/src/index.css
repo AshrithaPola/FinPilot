@@ -519,3 +519,17 @@ body {
 .hig-bar { position: absolute; top: 0; height: 8px; background: var(--accent); border-radius: 4px; }
 .hig-bar-ms { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
 .hig-id { font-size: 11px; margin-top: 4px; }
+
+/* --- admin traces --- */
+.traces-main { display: block; overflow: auto; padding: 16px 24px; }
+.traces h2, .traces h3 { margin: 8px 0; }
+.trace-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.trace-table th, .trace-table td {
+  text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); vertical-align: top;
+}
+.trace-table td { max-width: 520px; overflow-wrap: anywhere; }
+.trace-table th { color: var(--muted); font-weight: 600; }
+.trace-table tr.clickable { cursor: pointer; }
+.trace-table tr.clickable:hover { background: rgba(99, 102, 241, 0.08); }
+.trace-table tr.kind-node td:nth-child(4) { font-weight: 600; }
+.trace-table tr.kind-llm td:nth-child(3) { color: var(--accent-hover); }

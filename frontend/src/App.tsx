@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { User } from "firebase/auth";
 import AuthGate from "./AuthGate";
 import Chat from "./Chat";
+import Traces from "./Traces";
 import { apiFetch, type DocumentInfo, type Me } from "./api";
 import "./index.css";
 
@@ -27,6 +28,8 @@ export default function App() {
 
 function Workspace({ me, user, onSignOut }: { me: Me; user: User; onSignOut: () => void }) {
   const [documents, setDocuments] = useState<DocumentInfo[]>([]);
+  const [view, setView] = useState<"chat" | "traces">("chat");
+  const isAdmin = me.role === "admin";
 
   useEffect(() => {
     // setState only in the async callback, never in the effect body; skipped
@@ -48,13 +51,24 @@ function Workspace({ me, user, onSignOut }: { me: Me; user: User; onSignOut: () 
         <span className="user-badge" title={`Org ${me.org_id}, clearance ${me.clearance}`}>
           {user.email} · {me.customer_id ? "customer" : me.role}
         </span>
+        {isAdmin && (
+          <button className="link-btn" onClick={() => setView(view === "chat" ? "traces" : "chat")}>
+            {view === "chat" ? "Traces" : "Chat"}
+          </button>
+        )}
         <button className="link-btn" onClick={onSignOut}>Sign out</button>
       </header>
 
-      <main className="app-main">
-        <DocumentList documents={documents} />
-        <Chat isCustomer={!!me.customer_id} demoToday={me.demo_today} />
-      </main>
+      {view === "traces" && isAdmin ? (
+        <main className="app-main traces-main">
+          <Traces />
+        </main>
+      ) : (
+        <main className="app-main">
+          <DocumentList documents={documents} />
+          <Chat isCustomer={!!me.customer_id} demoToday={me.demo_today} />
+        </main>
+      )}
     </div>
   );
 }
