@@ -120,3 +120,29 @@ def test_the_accounts_summary_shows_only_the_callers_own_accounts(bank, pg_url):
     a, b = summaries["cust-0001"], summaries["cust-0002"]
     assert not {t["txn_id"] for t in a["transactions"]} & {t["txn_id"] for t in b["transactions"]}
     assert bank.get("/accounts/summary", headers=_as("uid-staff")).status_code == 404  # staff have no accounts
+
+
+FRAUD_MEMO = ("INTERNAL: Card Fraud Rules memo. STAFF ONLY. Do not share with customers. "
+              "Rule R-101 Velocity: 6 or more card-not-present purchases within 10 minutes are declined.")
+
+
+def test_staff_get_the_fraud_memo_and_a_customer_is_told_it_cannot_be_found(bank, app_env):
+    from engine.graph import NOTHING_FOUND
+
+    add_text_document(FRAUD_MEMO, "internal/fraud-rules-memo.md", org_id=synthetic.BANK_ORG, clearance=2)
+    app_env.plan = {"intent": "memo", "out_of_scope": False, "steps": [
+        _step("s1", "documents", "search", {"query": "fraud rules memo"})]}
+    app_env.rewrite, app_env.rewrite_target = "card fraud thresholds memo", "fraud rules memo"
+
+    # The customer: RLS never returns the memo, the retry finds nothing about it, so "couldn't find".
+    body = bank.post("/ask", headers=_as("uid-cust-1"), json={"question": "What does the fraud rules memo say?"}).json()
+    assert body["outcome"] == "nothing_found" and body["answer"] == NOTHING_FOUND
+    assert "R-101" not in app_env.prompts_sent()  # not one model call saw the memo
+
+    # Staff (clearance 2): the memo is found and answered from, its "do not share" line notwithstanding.
+    app_env.answer = "The memo's velocity rule R-101 declines 6 or more card-not-present purchases [1][2][3][4][5]."
+    body = bank.post("/ask", headers=_as("uid-staff"), json={"question": "What does the fraud rules memo say?"}).json()
+    assert body["outcome"] == "answered" and "R-101" in body["answer"]
+    assert "internal/fraud-rules-memo.md" in {c.get("filename") for c in body["citations"]}
+    [summarizer] = [c for c in app_env.chat_calls if c["role"] == "summarizer"]
+    assert "R-101" in summarizer["user"] and "Asked by: bank staff" in summarizer["user"]

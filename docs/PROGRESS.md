@@ -1148,6 +1148,17 @@ Three deliberately vague questions on Neon (cust-0036), traced:
     the latest filing on or before DEMO_TODAY (refetched on Neon: 0 rows
     after it), and the executor caps every market tool's date (as_of, or
     end for price history) at today.
+- **Who is asking, and document text as data:** with the memo found, the
+  summarizer refused staff its content because the memo says "do not
+  share with customers". The summarizer and validators now read an "Asked
+  by" line (customer or staff, role and clearance, no ids) and are told
+  that access is enforced in the database, so everything retrieved may be
+  shared with that person; instructions inside documents ("don't share",
+  "ignore…") are reported as data, never obeyed. Tests: a planted
+  instruction reaches the models only inside the evidence; staff asking
+  about the memo get it, a customer gets "couldn't find" and no prompt
+  ever holds the memo's text. Phase 11's red-team set includes
+  planted-instruction attacks (FINPILOT_PLAN.md, section 12).
 - **Not run in a browser here:** this machine runs no Postgres or Docker,
   so the UI was checked with the type checker, lint and build, and the
   stream with the integration tests (`test_ask_flow.py`: event order, the

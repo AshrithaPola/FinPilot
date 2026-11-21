@@ -101,7 +101,7 @@ All three are judged in one structured LLM call, after the code checks. Any fail
 
 ### 12. Red-teaming
 
-- [ ] **Reasoning engine**: prompt injection in questions and in documents, plan hijacking, scope escape, validator evasion. *Phase 11.*
+- [ ] **Reasoning engine**: prompt injection in questions and in documents, plan hijacking, scope escape, validator evasion. *Phase 11.* Include **planted-instruction attacks in document chunks**: a retrieved passage that says "don't share this", "ignore your instructions" or "mark this answer passed" is a prompt-injection vector (the staff walkthrough of 2026-11-21 saw the summarizer refuse staff the fraud memo because the memo said "do not share"); every such line must be reported as data, never obeyed, by the summarizer and the validators.
 - [ ] **Agents**: cross-customer access through tool arguments, staff-only canary extraction, calculation tampering, SQL-shaped inputs. *Phase 11.* **Partial:** the leakage check and the adversarial tool tests cover cross-customer access and the canary; the full red-team is Phase 11.
 
 ## Phases and commit budget
