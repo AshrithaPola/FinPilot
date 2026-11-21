@@ -12,6 +12,12 @@ cd .. && backend/.venv/Scripts/python scripts/neon.py run -- python -m eval.ques
 
 `--data` runs each question's gold sources as its asker, under row-level security, on the demo date (2026-06-30): documents must exist, be visible to the asker, be the version in force and have the section you named; tools and calculations must run; every expected number must match the data (tool fields in dollars; figures you cite from a document must appear in that section's text).
 
+## Independent questions
+
+`backend/eval/customer_facts.md` is each demo customer's fact sheet: accounts and balances, every fee with the transaction that caused it, money out by category for the last three months, the largest transactions, card payments and late fees, and holdings. It is built with plain SQL as the database owner (`python -m eval.customer_facts`, through `scripts/neon.py run`), none of the app's tools or access code, so a question whose numbers come from it checks the app against something the app didn't compute.
+
+Take a question's expected numbers from the sheet and mark it `"independent": true` (or run `python -m eval.questions --mark-independent`, which marks every question that qualifies). The validator checks that every number from the data (not the ones from a document) is in that customer's sheet. Aim for at least 5.
+
 ## What makes a good question
 
 Every question: one thing to get right, phrased the way a customer or a teller would type it; expected facts that a grader can check without reading your mind; gold sources that are the *minimum* evidence for a correct answer; notes that say what a wrong answer looks like. Avoid questions whose answer depends on the model's wording, or on data after the demo date.

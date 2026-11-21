@@ -22,6 +22,11 @@ One question per line (docs/EVAL_GUIDE.md says how to write them):
                        {"id": "s3", "kind": "document", "file": "fee-schedule-2026.md",
                         "section": "1. Everyday Checking"}
     notes            why the question is there, the trap, what a wrong answer looks like
+    independent      optional, true when the expected numbers were taken from
+                     eval/customer_facts.md (plain SQL as the owner, none of the
+                     app's code): the validator checks each number from the data
+                     is in that customer's fact sheet. --mark-independent sets it
+                     on every question that qualifies. Target: INDEPENDENT_TARGET.
 
 A number's path is resolved like the engine's step references
 (engine.executor.resolve): a tool field in cents is compared in dollars
@@ -47,6 +52,8 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 QUESTIONS = Path(__file__).with_name("questions.jsonl")
+FACT_SHEET = Path(__file__).with_name("customer_facts.md")
+INDEPENDENT_TARGET = 5
 DEMO_CUSTOMERS = ("cust-0036", "cust-0019", "cust-0011")
 TYPES = ("exact-term", "paraphrase", "version-trap", "multi-step-calculation", "account-data", "investing",
          "refusal-advice", "refusal-money-movement", "unanswerable", "staff-only", "cross-customer-attack")
@@ -89,6 +96,7 @@ class Question(_Strict):
     expected_answer: Expected
     gold_sources: list[Source] = []
     notes: str = Field(min_length=10)
+    independent: bool = False
 
 
 def load(path: Path = QUESTIONS) -> tuple[list[Question], list[str]]:
@@ -154,6 +162,56 @@ def shape_errors(q: Question) -> list[str]:
     return errors
 
 
+def fact_sheet(path: Path = FACT_SHEET) -> dict[str, str]:
+    """Each demo customer's section of the fact sheet, by customer id."""
+    sections, current = {}, None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("## "):
+            current = line[3:].strip()
+            sections[current] = ""
+        elif current:
+            sections[current] += line + "\n"
+    return sections
+
+
+def data_numbers(q: Question) -> list[Number]:
+    """The expected numbers that come from the data (tools and calculations), not from a document."""
+    documents = {s.id for s in q.gold_sources if s.kind == "document"}
+    return [n for n in q.expected_answer.numbers if re.match(r"^\$(s\d+)", n.path).group(1) not in documents]
+
+
+def independence_errors(q: Question, sheets: dict[str, str]) -> list[str]:
+    """Why `q` can't be independent (empty: it can): asked by a demo customer, with
+    numbers from the data, every one of them in that customer's fact sheet."""
+    if q.asked_as not in sheets:
+        return [f"independent: {q.asked_as} has no fact sheet"]
+    numbers = data_numbers(q)
+    if not numbers:
+        return ["independent: no expected numbers come from the data"]
+    sheet = sheets[q.asked_as]
+    return [f"independent: {n.value} ({n.what}) isn't in {q.asked_as}'s fact sheet"
+            for n in numbers if f"${abs(Decimal(str(n.value))):,.2f}" not in sheet]
+
+
+def mark_independent(path: Path, sheets: dict[str, str]) -> int:
+    """Set "independent": true on every question that qualifies; returns how many are."""
+    lines, count = [], 0
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        raw = json.loads(line)
+        try:
+            ok = not independence_errors(Question.model_validate(raw), sheets)
+        except ValidationError:
+            ok = False  # load() reports it
+        if ok:
+            raw["independent"] = True
+            count += 1
+        lines.append(json.dumps(raw, ensure_ascii=False))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return count
+
+
 def mix_errors(questions: list[Question]) -> list[str]:
     """Every type at least MIN_PER_TYPE times, none over MAX_SHARE, staff and two customers asking."""
     if not questions:
@@ -167,6 +225,10 @@ def mix_errors(questions: list[Question]) -> list[str]:
     askers = {q.asked_as for q in questions}
     if "staff" not in askers or len(askers - {"staff"}) < 2:
         errors.append("asked_as: needs staff and at least two demo customers")
+    independent = sum(q.independent for q in questions)
+    if independent < INDEPENDENT_TARGET:
+        errors.append(f"independent: {independent} question(s) checked against the fact sheet, "
+                      f"target at least {INDEPENDENT_TARGET}")
     return errors
 
 
@@ -318,9 +380,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Validate the eval set.")
     parser.add_argument("file", nargs="?", default=str(QUESTIONS))
     parser.add_argument("--data", action="store_true", help="also check sources and numbers on the database")
+    parser.add_argument("--mark-independent", action="store_true",
+                        help="mark every question whose data numbers are in the fact sheet as independent")
     args = parser.parse_args()
+    sheets = fact_sheet()
+    if args.mark_independent:
+        print(f"marked {mark_independent(Path(args.file), sheets)} question(s) independent")
     questions, errors = load(Path(args.file))
-    by_question = {q.id: shape_errors(q) for q in questions}
+    by_question = {q.id: shape_errors(q) + (independence_errors(q, sheets) if q.independent else [])
+                   for q in questions}
     if args.data:
         from config import get_settings
         from deps import get_store
@@ -329,7 +397,8 @@ def main() -> int:
         for q in questions:
             by_question[q.id] += data_errors(q, sources)
     mix = mix_errors(questions)
-    print(f"{len(questions)} questions" + ("" if args.data else " (format and mix only; --data checks the data)"))
+    print(f"{len(questions)} questions, {sum(q.independent for q in questions)} independent (target "
+          f"{INDEPENDENT_TARGET})" + ("" if args.data else "; format and mix only, --data checks the data"))
     for t, n in sorted(Counter(q.type for q in questions).items()):
         print(f"  {t:24} {n}")
     for line in errors:

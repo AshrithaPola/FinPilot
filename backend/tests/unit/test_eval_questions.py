@@ -49,7 +49,7 @@ def test_each_type_has_its_rules():
 def test_the_mix_needs_every_type_staff_and_two_customers():
     full = [q(id=f"q-{t}-{i}", type=t, asked_as=("staff", "cust-0036", "cust-0019")[i % 3])
             for t in ev.TYPES for i in range(3)]
-    assert ev.mix_errors(full) == []
+    assert [e for e in ev.mix_errors(full) if not e.startswith("independent")] == []
     assert any("exact-term" in e for e in ev.mix_errors([x for x in full if x.type != "exact-term"]))
     lopsided = full + [q(id=f"extra-{i}") for i in range(20)]
     assert any("more than 20%" in e for e in ev.mix_errors(lopsided))
@@ -110,3 +110,55 @@ def test_a_documents_versions_share_its_name_without_the_year():
     assert ev._family("public/aapl-10k-2025.md") != ev._family("public/ko-10k-2025.md")
     assert ev._in_force({"effective_date": "2026-02-01", "superseded_on": None}, "2026-06-30")
     assert not ev._in_force({"effective_date": "2026-11-03", "superseded_on": None}, "2026-06-30")  # filed later
+
+
+SHEET = """# Demo customers: fact sheet
+
+## cust-0036
+
+| 2026-04-06 | $15.00 | overdraft | no | cust-0036-chk | cust-0036-t00355, 2026-04-06, -$25.86, Corner Grocer |
+
+## cust-0019
+
+| 2026-05-13 | $3.50 | atm | no | cust-0019-chk | - |
+"""
+
+
+def test_independent_questions_take_their_data_numbers_from_the_fact_sheet(tmp_path):
+    path = tmp_path / "facts.md"
+    path.write_text(SHEET, encoding="utf-8")
+    sheets = ev.fact_sheet(path)
+    assert set(sheets) == {"cust-0036", "cust-0019"} and "$25.86" in sheets["cust-0036"]
+    fee = q(type="account-data", gold_sources=[
+        {"id": "s1", "kind": "tool", "tool": "list_fees", "arguments": {}},
+        {"id": "s2", "kind": "document", "file": "fee-schedule-2026.md", "section": "1. Everyday Checking"}],
+        expected_answer={"outcome": "answered", "facts": ["x"], "numbers": [
+            {"value": 15, "what": "fee", "path": "$s1[0].amount_cents"},
+            {"value": 25.86, "what": "purchase", "path": "$s1[0].amount_cents", "abs": True},
+            {"value": 50, "what": "cushion, from the document", "path": "$s2"}]})
+    assert ev.independence_errors(fee, sheets) == []  # the document's $50 isn't a data number
+    other = fee.model_copy(update={"asked_as": "cust-0019"})
+    assert any("isn't in cust-0019's fact sheet" in e for e in ev.independence_errors(other, sheets))
+    assert ev.independence_errors(q(asked_as="staff"), sheets) == ["independent: staff has no fact sheet"]
+    assert ev.independence_errors(q(), sheets) == ["independent: no expected numbers come from the data"]
+
+    questions = tmp_path / "q.jsonl"
+    questions.write_text(json.dumps(fee.model_dump()) + "\n" + json.dumps({**BASE, "id": "no-numbers"}) + "\n",
+                         encoding="utf-8")
+    assert ev.mark_independent(questions, sheets) == 1
+    marked, errors = ev.load(questions)
+    assert errors == [] and [x.independent for x in marked] == [True, False]
+
+
+def test_the_mix_wants_at_least_five_independent_questions():
+    full = [q(id=f"q-{t}-{i}", type=t, asked_as=("staff", "cust-0036", "cust-0019")[i % 3])
+            for t in ev.TYPES for i in range(3)]
+    assert any("independent: 0" in e for e in ev.mix_errors(full))
+    marked = [x.model_copy(update={"independent": i < 5}) for i, x in enumerate(full)]
+    assert not any("independent" in e for e in ev.mix_errors(marked))
+
+
+def test_the_committed_fact_sheet_covers_the_three_demo_customers():
+    sheets = ev.fact_sheet()
+    assert set(sheets) == set(ev.DEMO_CUSTOMERS)
+    assert all("### Fees charged" in s and "### Holdings" in s for s in sheets.values())

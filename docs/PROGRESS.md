@@ -1252,7 +1252,8 @@ Where they fit, and nothing else moved:
 
 | # | Commit | What |
 |---|---|---|
-| 1 | this commit | The eval set's format, three worked examples, its validator and the writing guide |
+| 1 | b3f3cd1 | The eval set's format, three worked examples, its validator and the writing guide |
+| 2 | this commit | The demo customers' fact sheet (plain SQL as the owner) and independent questions |
 
 - **The set:** `backend/eval/questions.jsonl`, one JSON question per line:
   id, question, asked_as (a demo customer or staff), type (11 types, from
@@ -1280,6 +1281,22 @@ Where they fit, and nothing else moved:
   to $3.50 on 2026-02-01, a version trap in their own fees).
 - **Next:** the user writes about 40 questions (`docs/EVAL_GUIDE.md`);
   they pass `--data` before any eval run.
+- **The fact sheet** (`backend/eval/customer_facts.md`, from
+  `python -m eval.customer_facts`): for cust-0036, cust-0019 and
+  cust-0011, accounts and balances on the demo date, every fee with the
+  transaction that caused it, money out by category for April to June
+  2026, the ten largest money-out transactions, card payments and late
+  fees, and holdings priced on the demo date. Plain SQL as the database
+  owner, filtered by customer id in the query: none of the app's tools,
+  access layer or balance code. Its balances agree with the app's
+  (cust-0036 checking $2,677.23, savings $14,099.14, card -$246.04).
+- **Independent questions:** `"independent": true` when a question's
+  numbers come from the fact sheet; the validator checks every number from
+  the data is in that customer's sheet (document figures are checked
+  against the document as before), and `--mark-independent` marks every
+  question that qualifies. Target: at least 5. Now 2 of the 3 examples
+  ($15 overdraft, ATM fee rise); the groceries example isn't, as its two
+  purchases aren't in the sheet's top-ten list.
 
 ## Phase 10 notes (from 2026-11-14)
 
