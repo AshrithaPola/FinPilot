@@ -1248,6 +1248,39 @@ Where they fit, and nothing else moved:
   schedule's "more than $50.00" rule (trace 75b2de2f, 11.3 s, 3 calls).
 - **Screenshots** in `docs/screenshots/`, shown in the README.
 
+## Phase 10: evaluation
+
+| # | Commit | What |
+|---|---|---|
+| 1 | this commit | The eval set's format, three worked examples, its validator and the writing guide |
+
+- **The set:** `backend/eval/questions.jsonl`, one JSON question per line:
+  id, question, asked_as (a demo customer or staff), type (11 types, from
+  exact-term to cross-customer-attack), expected_answer (outcome, facts,
+  numbers), gold_sources, notes. The gold sources are a small plan the
+  validator runs as the asker (`s1`, `s2`... with the engine's `$s1[*].x`
+  references, so a total comes from the calculator).
+- **The validator** (`python -m eval.questions`, `--data` on Neon): per
+  question, the type's rules (a refusal-advice question is one the app
+  classifies as asking for advice; a money-movement request is one it
+  routes; a cross-customer attack names another customer's id), and with
+  `--data`, as the asker under RLS on the demo date: each document
+  exists, is visible, is in force and has the section; each tool and
+  calculation runs; each number matches (tool fields in dollars, document
+  figures in the section's text); a version trap has another version not
+  in force; staff-only cites a clearance-2 document. The mix: every type
+  at least twice, none over 20%, staff and two customers asking.
+- **Checked against wrong questions** on Neon: a wrong fee, the superseded
+  fee schedule, the staff memo cited by a customer, a missing section, a
+  figure not in the section, a "refusal-advice" question that asks for
+  facts: each caught with its reason.
+- **Worked examples:** cust-0036's $15 overdraft (with the same day's
+  $5.40 foreign-transaction fee as the distractor), cust-0036's May
+  groceries ($259.98 from the calculator), cust-0019's ATM fee rise ($3.00
+  to $3.50 on 2026-02-01, a version trap in their own fees).
+- **Next:** the user writes about 40 questions (`docs/EVAL_GUIDE.md`);
+  they pass `--data` before any eval run.
+
 ## Phase 10 notes (from 2026-11-14)
 
 - **Reranker and tables.** The cross-encoder demoted table-row chunks
