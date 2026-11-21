@@ -35,6 +35,7 @@ from db import session as db
 import deps
 from deps import get_store
 from llm import classify_error, track_usage
+import observability
 import tracing
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -61,6 +62,7 @@ async def lifespan(app: FastAPI):
     get_store()
     logger.info("Store ready.")
     yield
+    observability.flush()  # what Langfuse hasn't exported yet
 
 
 app = FastAPI(title="FinPilot API", lifespan=lifespan)

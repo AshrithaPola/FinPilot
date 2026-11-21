@@ -43,6 +43,16 @@ def _retrieval_settings(monkeypatch):
     monkeypatch.setenv("RERANK", "false")
 
 
+@pytest.fixture(autouse=True)
+def _no_langfuse(monkeypatch):
+    """No test sends anything to Langfuse, even with keys in the local .env."""
+    for name in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_BASE_URL", "LANGFUSE_HOST"):
+        monkeypatch.setenv(name, "")
+    config.get_settings.cache_clear()
+    yield
+    config.get_settings.cache_clear()
+
+
 @pytest.fixture
 def fake_llm():
     return FakeLLM()

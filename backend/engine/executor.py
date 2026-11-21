@@ -30,9 +30,11 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from engine.plan import Plan, Step
 from ingestion.store import Filters
+from ingestion.retriever import StoreRetriever, chunk_of
 from tools.accounts import TOOLS as ACCOUNT_TOOLS
 from tools.calculator import calculate
-from tools.common import AccessRefused, ToolError
+from tools.common import AccessRefused, ToolError, langchain_tool, run_langchain_tool
+from tools.market import TOOLS as MARKET_TOOLS
 import tracing
 
 _REF = re.compile(r"^\$(s\d+)((?:\[(?:\d+|\*)\]|\.[a-z_]+)*)$")
@@ -277,9 +279,12 @@ class Executor:
             return await self._search(step, arguments, principal)
         if step.tool in AS_OF_TODAY and self._today:
             arguments = capped(arguments, AS_OF_TODAY[step.tool], self._today)
-        tools = self._accounts if step.tool in ACCOUNT_TOOLS else self._market
+        owner, registry = ((self._accounts, ACCOUNT_TOOLS) if step.tool in ACCOUNT_TOOLS
+                           else (self._market, MARKET_TOOLS))
+        # A LangChain tool bound to this caller (callbacks see it as a tool run).
+        tool = langchain_tool(registry[step.tool], lambda args: owner.call(principal, step.tool, args))
         with tracing.span("tool", step.tool):
-            return tools.call(principal, step.tool, arguments)
+            return run_langchain_tool(tool, arguments)
 
     async def _search(self, step: Step, arguments: dict, principal) -> list[dict]:
         query = arguments.get("query")
@@ -319,7 +324,8 @@ class Executor:
     @staticmethod
     async def _traced_search(store, query: str, filters: Filters) -> list:
         with tracing.span("search", query[: tracing.MAX_TEXT]) as span:
-            hits = await store.search(query, filters=filters)
+            # Through the store's LangChain retriever (callbacks see it as a retriever run).
+            hits = [chunk_of(d) for d in await StoreRetriever(store=store, filters=filters).ainvoke(query)]
             scores = [h.rerank_score for h in hits if h.rerank_score is not None]
             span.update(hits=len(hits), top_rerank=max(scores) if scores else None, weak=weak(query, hits),
                         sections=[f"{h.filename} > {h.section}"[:120] for h in hits[:3]])

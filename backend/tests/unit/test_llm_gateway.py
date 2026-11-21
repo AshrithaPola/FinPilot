@@ -182,7 +182,7 @@ async def test_gemini_sends_schema_as_structured_output():
     assert create.calls[0]["model"] == "gemini-x"
     assert config.response_mime_type == "application/json"
     assert config.response_json_schema == SCHEMA
-    assert config.system_instruction == "sys"
+    assert config.system_instruction.parts[0].text == "sys"  # LangChain sends it as Content
 
 
 async def test_gemini_checker_thinking_level_applies_to_checkers_only():
@@ -193,6 +193,8 @@ async def test_gemini_checker_thinking_level_applies_to_checkers_only():
     checker_config, generation_config = (call["config"] for call in create.calls)
     assert checker_config.thinking_config.thinking_level == genai_types.ThinkingLevel.MINIMAL
     assert generation_config.thinking_config is None  # generation: model default
+    # Each setting is its own copy of the chat model: its own token limit.
+    assert (checker_config.max_output_tokens, generation_config.max_output_tokens) == (1024, 4096)
 
 
 async def test_gemini_empty_thinking_level_leaves_model_default():
@@ -320,7 +322,7 @@ def test_default_provider_is_gemini_with_free_tier_models():
     assert settings.grading_thinking_level == "minimal"
     gateway = build_llm(settings)
     assert isinstance(gateway, GeminiLLM)
-    assert gateway._checker_thinking.thinking_level == genai_types.ThinkingLevel.MINIMAL
+    assert gateway._checker_thinking == "minimal"
     assert gateway._request_timeout_s == 60.0
 
 
@@ -409,8 +411,9 @@ async def test_claude_records_input_and_output_tokens():
 async def test_gemini_sends_the_image_before_the_text():
     client, create = gemini_client(gemini_reply('{"merchant": "X"}'))
     assert await GeminiLLM(client).complete_json("gemini-x", "sys", "read", SCHEMA, image=b"png") == {"merchant": "X"}
-    image, text = create.calls[0]["contents"]
-    assert (image.inline_data.data, image.inline_data.mime_type, text) == (b"png", "image/png", "read")
+    [message] = create.calls[0]["contents"]  # one user turn, as LangChain sends it
+    image, text = message.parts
+    assert (image.inline_data.data, image.inline_data.mime_type, text.text) == (b"png", "image/png", "read")
 
 
 async def test_claude_sends_the_image_before_the_text():
@@ -424,4 +427,5 @@ async def test_claude_sends_the_image_before_the_text():
 async def test_without_an_image_the_request_is_unchanged():
     client, create = gemini_client(gemini_reply("{}"))
     await GeminiLLM(client).complete_json("gemini-x", "sys", "q", SCHEMA)
-    assert create.calls[0]["contents"] == "q"
+    [message] = create.calls[0]["contents"]
+    assert [part.text for part in message.parts] == ["q"]  # text only

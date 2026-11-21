@@ -37,6 +37,12 @@ class Tool:
     run: Callable
 
 
+def invalid_arguments(name: str, exc: ValidationError) -> ToolError:
+    """A refused call's error, naming each bad argument and why."""
+    problems = "; ".join(f"{'.'.join(map(str, e['loc'])) or 'arguments'}: {e['msg']}" for e in exc.errors())
+    return ToolError(f"Invalid arguments for {name}: {problems}")
+
+
 def validate(tools: dict[str, Tool], name: str, arguments: dict | None) -> tuple[Tool, Args]:
     tool = tools.get(name)
     if tool is None:
@@ -44,9 +50,28 @@ def validate(tools: dict[str, Tool], name: str, arguments: dict | None) -> tuple
     try:
         return tool, tool.args.model_validate(arguments or {})
     except ValidationError as exc:
-        problems = "; ".join(f"{'.'.join(map(str, e['loc'])) or 'arguments'}: {e['msg']}"
-                             for e in exc.errors())
-        raise ToolError(f"Invalid arguments for {name}: {problems}") from None
+        raise invalid_arguments(name, exc) from None
+
+
+def langchain_tool(tool: Tool, run: Callable[[dict], list[dict]]):
+    """`tool` as a LangChain StructuredTool: its strict Pydantic model is the
+    input schema (an unknown argument, say customer_id, is refused before
+    anything runs), and `run(arguments)` runs it as the caller, who is bound
+    when the tool is made and is never an argument. The owner's call()
+    validates again and runs its parameterized SQL in a read-only
+    transaction bound to the caller (RLS), as before."""
+    from langchain_core.tools import StructuredTool
+
+    return StructuredTool.from_function(func=lambda **arguments: run(arguments), name=tool.name,
+                                        description=tool.description, args_schema=tool.args)
+
+
+def run_langchain_tool(tool, arguments: dict):
+    """Invoke a LangChain tool, refusing bad arguments with our own ToolError."""
+    try:
+        return tool.invoke(arguments)
+    except ValidationError as exc:
+        raise invalid_arguments(tool.name, exc) from None
 
 
 @contextmanager

@@ -44,6 +44,7 @@ from anthropic import AsyncAnthropic
 from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types as genai_types
+from langchain_core.messages import HumanMessage, SystemMessage
 
 import tracing
 
@@ -172,6 +173,18 @@ _GEMINI_BLOCKED = {
     genai_types.FinishReason.LANGUAGE,
     genai_types.FinishReason.OTHER,
 }
+_GEMINI_BLOCKED_NAMES = {reason.name for reason in _GEMINI_BLOCKED}  # as LangChain reports them
+
+
+def _api_error(exc: BaseException) -> genai_errors.APIError | None:
+    """The Gemini API error behind `exc`: itself, or the one LangChain's chat
+    model wrapped (it re-raises ClientError/ServerError as its own types)."""
+    seen = 0
+    while exc is not None and seen < 5:
+        if isinstance(exc, genai_errors.APIError):
+            return exc
+        exc, seen = exc.__cause__, seen + 1
+    return None
 
 
 def _gemini_error_details(exc: genai_errors.APIError) -> list[dict]:
@@ -189,7 +202,8 @@ def gemini_retry_delay(exc: Exception) -> float | None:
     if isinstance(exc, TimeoutError):
         return 0.0
     # 429 rate limit, 500 transient INTERNAL, 503 overloaded.
-    if not isinstance(exc, genai_errors.APIError) or exc.code not in (429, 500, 503):
+    exc = _api_error(exc)
+    if exc is None or exc.code not in (429, 500, 503):
         return None
     hint = 0.0
     for detail in _gemini_error_details(exc):
@@ -212,93 +226,116 @@ def gemini_retry_delay(exc: Exception) -> float | None:
 
 
 class GeminiLLM(_BackoffLLM):
+    """Gemini through LangChain's ChatGoogleGenerativeAI (so the engine's
+    LangGraph runs see each call, e.g. Langfuse's callback handler), on our
+    one genai client. This class stays the gateway around it: LangChain's own
+    retries are off; the timeouts, backoff, daily-quota handling and token
+    and cost accounting are _BackoffLLM's."""
+
     def __init__(self, client: genai.Client, checker_thinking_level: str = "", **backoff):
         """`checker_thinking_level` applies to complete_json (the checker
         calls) only; "" leaves the model's default. Generation always runs
         at the model's default thinking level."""
         super().__init__(**backoff)
         self._client = client
-        self._checker_thinking = (
-            genai_types.ThinkingConfig(thinking_level=checker_thinking_level)
-            if checker_thinking_level else None
-        )
+        self._checker_thinking = checker_thinking_level or None
+        self._chats: dict[tuple, object] = {}
+
+    def _chat(self, model: str, max_tokens: int, thinking: str | None = None):
+        """The chat model for these settings, made once and reused."""
+        from langchain_google_genai import ChatGoogleGenerativeAI
+
+        key = (model, max_tokens, thinking)
+        if key not in self._chats:
+            if model not in self._chats:
+                # Built (and validated) once per model, about a second: the key
+                # only satisfies the constructor, the requests go through
+                # self._client. One attempt each: retries are the gateway's.
+                base = ChatGoogleGenerativeAI(model=model, google_api_key="unused", max_retries=1)
+                base.client = self._client
+                self._chats[model] = base
+            # Each setting is a copy sharing that client (no validation, no new client).
+            self._chats[key] = self._chats[model].model_copy(
+                update={"max_output_tokens": max_tokens, **({"reasoning_effort": thinking} if thinking else {})})
+        return self._chats[key]
 
     def _retry_delay(self, exc: Exception) -> float | None:
         return gemini_retry_delay(exc)
 
-    def _token_counts(self, response) -> dict:
-        meta = response.usage_metadata
-        if meta is None:
-            return dict.fromkeys(TOKEN_FIELDS)
-        # Gemini omits thoughts_token_count when the model didn't think.
-        return {"prompt_tokens": meta.prompt_token_count,
-                "output_tokens": meta.candidates_token_count,
-                "thinking_tokens": meta.thoughts_token_count or 0}
+    @staticmethod
+    def _request(runnable, messages):
+        """One LangChain call that raises the Gemini error itself, as the
+        gateway always has (LangChain re-raises it as its own types)."""
+        async def run():
+            try:
+                return await runnable.ainvoke(messages)
+            except Exception as exc:
+                api = _api_error(exc)
+                if api is not None and api is not exc:
+                    raise api from exc
+                raise
+        return run
 
-    def _usable_text(self, model: str, response, what: str) -> str | None:
-        """Response text, or None if the prompt/answer was blocked."""
-        feedback = response.prompt_feedback
-        if feedback is not None and feedback.block_reason:
-            logger.warning("Gemini %s blocked a %s prompt: %s", model, what, feedback.block_reason)
+    def _token_counts(self, response) -> dict:
+        message = response.get("raw") if isinstance(response, dict) else response
+        meta = getattr(message, "usage_metadata", None)
+        if not meta:
+            return dict.fromkeys(TOKEN_FIELDS)
+        thinking = (meta.get("output_token_details") or {}).get("reasoning") or 0
+        # LangChain's output_tokens include the thinking; ours count it apart.
+        return {"prompt_tokens": meta.get("input_tokens"),
+                "output_tokens": (meta.get("output_tokens") or 0) - thinking,
+                "thinking_tokens": thinking}
+
+    def _usable_text(self, model: str, message, what: str) -> str | None:
+        """The reply's text, or None if the prompt or the answer was blocked."""
+        if message is None:
             return None
-        if not response.candidates:
+        meta = message.response_metadata or {}
+        block = (meta.get("prompt_feedback") or {}).get("block_reason")
+        if block:
+            logger.warning("Gemini %s blocked a %s prompt: %s", model, what, block)
+            return None
+        reason = str(meta.get("finish_reason") or "")
+        if not reason and not message.content:
             logger.warning("Gemini %s returned no candidates for a %s request", model, what)
             return None
-        reason = response.candidates[0].finish_reason
-        if reason in _GEMINI_BLOCKED:
+        if reason in _GEMINI_BLOCKED_NAMES:
             logger.warning("Gemini %s stopped a %s request: %s", model, what, reason)
             return None
-        return response.text or ""
+        return message.text or ""
 
     async def complete_text(
         self, model: str, system: str, user: str, max_tokens: int = 4096, role: str = ""
     ) -> str:
-        config = genai_types.GenerateContentConfig(
-            system_instruction=system, max_output_tokens=max_tokens
-        )
-        response = await self._call(
-            model,
-            lambda: self._client.aio.models.generate_content(
-                model=model, contents=user, config=config
-            ),
-            role,
-        )
+        chat = self._chat(model, max_tokens)
+        messages = [SystemMessage(system), HumanMessage(user)]
+        response = await self._call(model, self._request(chat, messages), role)
         return self._usable_text(model, response, "generation") or ""
 
     async def complete_json(
         self, model: str, system: str, user: str, schema: dict, max_tokens: int = 1024,
         role: str = "", image: bytes | None = None,
     ) -> dict:
-        """One-shot JSON call constrained by `schema` (structured output).
+        """One-shot JSON call constrained by `schema`: LangChain's
+        with_structured_output on Gemini's native structured output.
         `image` (PNG bytes) goes before the text, for vision extraction."""
-        contents = ([genai_types.Part.from_bytes(data=image, mime_type="image/png"), user]
-                    if image else user)
-        config = genai_types.GenerateContentConfig(
-            system_instruction=system,
-            max_output_tokens=max_tokens,
-            response_mime_type="application/json",
-            response_json_schema=schema,
-            thinking_config=self._checker_thinking,
-        )
-        response = await self._call(
-            model,
-            lambda: self._client.aio.models.generate_content(
-                model=model, contents=contents, config=config
-            ),
-            role,
-        )
-        text = self._usable_text(model, response, "checker")
-        if text is None:
+        structured = self._chat(model, max_tokens, self._checker_thinking).with_structured_output(
+            schema, method="json_schema", include_raw=True)
+        content = ([{"type": "image_url", "image_url": f"data:image/png;base64,{base64.b64encode(image).decode()}"},
+                    {"type": "text", "text": user}] if image else user)
+        messages = [SystemMessage(system), HumanMessage(content)]
+        result = await self._call(model, self._request(structured, messages), role)
+        if self._usable_text(model, result.get("raw"), "checker") is None:
             return {}
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
+        parsed = result.get("parsed")
+        if result.get("parsing_error") is not None or not isinstance(parsed, dict):
             # Includes output truncated at max_tokens (Gemini counts thinking
             # tokens against that budget). The checker contract stands:
             # malformed replies are treated as a "no".
             logger.warning("Checker returned malformed JSON for model %s", model)
             return {}
-        return parsed if isinstance(parsed, dict) else {}
+        return parsed
 
 
 # --- Anthropic ---------------------------------------------------------------------
@@ -386,7 +423,8 @@ def classify_error(exc: BaseException) -> str | None:
     leaking raw provider messages."""
     if isinstance(exc, TimeoutError):
         return "timeout"
-    if isinstance(exc, genai_errors.APIError):
+    if (api := _api_error(exc)) is not None:
+        exc = api
         if exc.code == 429:
             daily = any(
                 "PerDay" in violation.get("quotaId", "")

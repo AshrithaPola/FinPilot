@@ -9,7 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -79,6 +79,14 @@ class Settings(BaseSettings):
     # Market data (bank/market.py): free keys, in .env only.
     alpha_vantage_api_key: str | None = None
     fred_api_key: str | None = None
+
+    # --- Langfuse (observability.py): masked LLM traces, in .env only ---
+    # All three set: every /ask also goes to Langfuse, masked first. Unset:
+    # nothing leaves the app. Postgres traces (tracing.py) are always kept.
+    langfuse_public_key: str | None = None
+    langfuse_secret_key: str | None = None
+    langfuse_base_url: str | None = Field(default=None, validation_alias=AliasChoices(
+        "LANGFUSE_BASE_URL", "LANGFUSE_HOST", "langfuse_base_url"))
 
     # --- Auth (auth.py) ---
     # Firebase project whose ID tokens are accepted. The service account key

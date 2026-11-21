@@ -10,6 +10,11 @@ python-dotenv==1.2.4
 google-genai==2.32.0
 anthropic==1.17.0
 langgraph==1.2.16
+# Gemini calls go through LangChain's chat model, inside llm.py's gateway
+# (its timeouts, retries, quota handling and token accounting stay ours).
+langchain-google-genai==4.4.2
+# Masked traces of the engine's LangGraph runs (observability.py).
+langfuse==5.2.0
 langchain-text-splitters==1.1.3
 tiktoken==0.14.0
 

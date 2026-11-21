@@ -1164,6 +1164,45 @@ Three deliberately vague questions on Neon (cust-0036), traced:
   stream with the integration tests (`test_ask_flow.py`: event order, the
   answer after the check, the friendly timeout, admin diagnostics).
 
+## LangChain and Langfuse (2026-11-21)
+
+Where they fit, and nothing else moved:
+
+- **Model calls:** `GeminiLLM` sends each request through LangChain's
+  `ChatGoogleGenerativeAI`, on our one genai client (one validated chat
+  model per model name, a copy per token limit and thinking level). The
+  gateway around it is unchanged: LangChain's own retries are off; our
+  timeouts, backoff, daily-quota handling and token and cost accounting
+  run as before, and the Gemini error itself is still what a caller sees.
+  Every JSON call, the validators' verdict included, uses
+  `with_structured_output` (Gemini's native structured output).
+- **Tools:** the executor runs each accounts and market tool as a
+  LangChain `StructuredTool` (`tools.common.langchain_tool`): the tool's
+  strict Pydantic model is the input schema, and the caller is bound when
+  the tool is made, never an argument. The four layers stand: no
+  customer-id argument, validation (LangChain's, then the tool's own),
+  parameterized SQL, a read-only transaction under RLS.
+- **Retriever:** `ingestion.retriever.StoreRetriever`, the hybrid store as
+  a LangChain retriever; the executor searches through it.
+- **Langfuse:** `observability.py` gives each LangGraph run Langfuse's
+  LangChain callback handler, so nodes, LLM calls, tools and searches
+  show up as one trace (its session id is our trace id). Before anything
+  is sent, Langfuse's mask hook replaces amounts, merchants, account,
+  card, transaction and customer ids, customer names, emails and card
+  last-4s (`tests/unit/test_observability.py`). The Postgres traces stay
+  the full, access-controlled record. Off unless all three settings are
+  set; tests blank them.
+- **Five standard questions on Neon (cust-0036), before and after:** the
+  same answers (the $15 one now also states the fee rule), 3 LLM calls
+  each, 82.1 s and 81.8 s in all (Gemini 63.0 s and 63.5 s; 2 and 4
+  retries, one a 429 whose 26 s retry delay was honoured through
+  LangChain). No latency added: the first request's setup was 6.1 s
+  before and 6.0 s after.
+- **Langfuse rejected the export (403):** the project's API key in .env
+  authenticates but lacks the trace permissions (auth check and ingestion
+  both 403). A failed export never touches the answer. The masked trace
+  in Langfuse can be checked once the key has trace write and read access.
+
 ## Phase 10 notes (from 2026-11-14)
 
 - **Reranker and tables.** The cross-encoder demoted table-row chunks

@@ -11,6 +11,7 @@ import argparse
 import asyncio
 import json
 
+import observability
 import tracing
 from bank.synthetic import BANK_ORG
 from db.access import Access
@@ -53,6 +54,7 @@ async def main(customer: str, questions: list[str]) -> None:
         result["trace"] = trace.totals()
         tracing.save(get_store().engine, principal, trace, result, user_id=None, question=result["question"])
         print(show(question, result), end="\n\n", flush=True)
+    observability.flush()  # the masked Langfuse traces, before the process exits
 
 
 if __name__ == "__main__":

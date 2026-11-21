@@ -43,6 +43,7 @@ from engine.plan import PLAN_SCHEMA, REPLAN_SYSTEM, Plan, parse_plan, planner_pr
 from graph.redaction import redact
 from graph.routing import MONEY_MOVEMENT_RESPONSE, SMALL_TALK_RESPONSE, is_money_movement, is_small_talk
 from llm import track_usage
+import observability
 import tracing
 
 OUT_OF_SCOPE = ("I can help with your FinPilot Bank accounts, the bank's products and policies, "
@@ -362,8 +363,16 @@ async def answer(question: str, principal) -> dict:
     """Run the engine for one question as `principal`."""
     start = time.perf_counter()
     trace = tracing.current()
+    # Langfuse (when configured) sees the run through its LangChain callback
+    # handler, masked; the trace id ties it to the full trace in Postgres.
+    role = "customer" if getattr(principal, "customer_id", None) else "staff"
+    config = {"callbacks": observability.callbacks(), "run_name": "finpilot-ask",
+              "metadata": {"langfuse_tags": ["finpilot", role],
+                           "langfuse_session_id": trace.trace_id if trace else None,
+                           "finpilot_trace_id": trace.trace_id if trace else None}}
     with track_usage() as usage:  # tokens per role
-        state = await engine.ainvoke({"question": question, "access": principal, "timings": {}, "llm_calls": []})
+        state = await engine.ainvoke({"question": question, "access": principal, "timings": {}, "llm_calls": []},
+                                     config=config)
     plan: Plan | None = state.get("plan")
     calls = state.get("llm_calls", [])
     return {
