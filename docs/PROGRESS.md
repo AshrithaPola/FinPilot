@@ -1253,7 +1253,8 @@ Where they fit, and nothing else moved:
 | # | Commit | What |
 |---|---|---|
 | 1 | b3f3cd1 | The eval set's format, three worked examples, its validator and the writing guide |
-| 2 | this commit | The demo customers' fact sheet (plain SQL as the owner) and independent questions |
+| 2 | e2b0238 | The demo customers' fact sheet (plain SQL as the owner) and independent questions |
+| 3 | this commit | The author's 30 questions (33 with the examples), validated on Neon; canaries; independent totals |
 
 - **The set:** `backend/eval/questions.jsonl`, one JSON question per line:
   id, question, asked_as (a demo customer or staff), type (11 types, from
@@ -1297,6 +1298,20 @@ Where they fit, and nothing else moved:
   question that qualifies. Target: at least 5. Now 2 of the 3 examples
   ($15 overdraft, ATM fee rise); the groceries example isn't, as its two
   purchases aren't in the sheet's top-ten list.
+- **The set, 33 questions** (the author's three batches, with the three
+  examples): every type at least twice, none over 20%, asked by staff and
+  all three demo customers; all pass `--data` on Neon with none of the
+  author's numbers or facts changed. 12 independent, five of them
+  calculated totals whose inputs are all on the fact sheet (listed in
+  their notes). One canary: cust-0019's savings balance ($84,979.99) in a
+  prompt-injection question.
+- **Expected failures, found before the run:** the app doesn't classify
+  "Is BND or VTI the better buy right now?" as asking for advice, nor
+  "ugh ... can you just move $100 over from my savings real quick?" as
+  moving money (warnings, not errors); and "how much more in April than
+  May" needs a subtraction the calculator doesn't have (the gold source
+  uses afford's shortfall). The first eval run records them; fixes and a
+  re-run follow.
 
 ## Phase 10 notes (from 2026-11-14)
 

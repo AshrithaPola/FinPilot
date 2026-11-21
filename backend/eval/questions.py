@@ -77,6 +77,9 @@ class Expected(_Strict):
     outcome: Literal[OUTCOMES]  # type: ignore[valid-type]
     facts: list[str] = Field(min_length=1)
     numbers: list[Number] = []
+    # Canaries: strings the answer must never contain (another customer's balance). The
+    # validator checks each is real data of a customer the question names, on the fact sheet.
+    must_not_contain: list[str] = []
 
 
 class Source(_Strict):
@@ -117,10 +120,23 @@ def load(path: Path = QUESTIONS) -> tuple[list[Question], list[str]]:
     return questions, errors
 
 
-def shape_errors(q: Question) -> list[str]:
-    """Rules that need no data: ids in order, kinds complete, the type's own rules."""
+def app_warnings(q: Question) -> list[str]:
+    """Where the app's own code would treat the question differently from its type:
+    not an error (the eval set is meant to hold questions the app gets wrong), but
+    an expected failure worth knowing before the run."""
     from graph.routing import asks_for_advice, is_money_movement
 
+    if q.type == "refusal-advice" and not asks_for_advice(q.question):
+        return ["the app doesn't see this as asking for a recommendation (graph.routing.asks_for_advice): "
+                "expect no \"can't recommend trades\" line"]
+    if q.type == "refusal-money-movement" and not is_money_movement(q.question):
+        return ["the app doesn't route this as moving money (graph.routing.is_money_movement): "
+                "expect it to be planned as a question"]
+    return []
+
+
+def shape_errors(q: Question) -> list[str]:
+    """Rules that need no data: ids in order, kinds complete, the type's own rules."""
     errors, kinds = [], []
     for i, s in enumerate(q.gold_sources, 1):
         if s.id != f"s{i}":
@@ -145,9 +161,9 @@ def shape_errors(q: Question) -> list[str]:
         "version-trap": ("document" in kinds, "a document source (the version in force)"),
         "investing": (any(s.kind == "tool" and _is_market(s.tool) for s in q.gold_sources) or "document" in kinds,
                       "a market tool or a prospectus or 10-K source"),
-        "refusal-advice": (asks_for_advice(q.question), "a question the app sees as asking for a recommendation"),
-        "refusal-money-movement": (is_money_movement(q.question) and outcome == "money_movement",
-                                   "a request the app routes as moving money, outcome money_movement"),
+        "refusal-advice": (outcome == "answered" and not numbers,
+                           "outcome answered (the refusal, then facts), no numbers"),
+        "refusal-money-movement": (outcome == "money_movement", "outcome money_movement"),
         "unanswerable": (outcome in ("not_found", "out_of_scope") and not numbers,
                          "outcome not_found or out_of_scope, no numbers"),
         "staff-only": (staff and "document" in kinds, "asked by staff, a staff-only document source"),
@@ -159,7 +175,17 @@ def shape_errors(q: Question) -> list[str]:
     ok, needs = rules[q.type]
     if not ok:
         errors.append(f"type {q.type} needs: {needs}")
+    if any(not c.strip() for c in q.expected_answer.must_not_contain):
+        errors.append("must_not_contain: an empty canary")
     return errors
+
+
+def canary_errors(q: Question, sheets: dict[str, str]) -> list[str]:
+    """Each canary must be real data of a customer the question names (not the asker):
+    a canary that's on no one's sheet proves nothing when it's missing from an answer."""
+    named = [c for c in _CUSTOMER_ID.findall(q.question) if c != q.asked_as and c in sheets]
+    return [f"must_not_contain {c!r} isn't on the fact sheet of {', '.join(named) or 'a customer the question names'}"
+            for c in q.expected_answer.must_not_contain if not any(c in sheets[n] for n in named)]
 
 
 def fact_sheet(path: Path = FACT_SHEET) -> dict[str, str]:
@@ -180,28 +206,101 @@ def data_numbers(q: Question) -> list[Number]:
     return [n for n in q.expected_answer.numbers if re.match(r"^\$(s\d+)", n.path).group(1) not in documents]
 
 
-def independence_errors(q: Question, sheets: dict[str, str]) -> list[str]:
+def _on_sheet(dollars, sheet: str) -> bool:
+    return f"${abs(Decimal(str(dollars))):,.2f}" in sheet
+
+
+def _refs(value) -> list[str]:
+    """The "$sN..." references in a source's arguments."""
+    if isinstance(value, dict):
+        return [r for v in value.values() for r in _refs(v)]
+    if isinstance(value, list):
+        return [r for v in value for r in _refs(v)]
+    return [value] if isinstance(value, str) and value.startswith("$") else []
+
+
+def _input_errors(q: Question, sid: str, results: dict, sheet: str, depth: int = 0) -> list[str]:
+    """A calculation's data inputs that aren't on the sheet. An input that is itself a
+    calculation's result counts if it's on the sheet; otherwise its own inputs must be.
+    Constants (the question's $250) aren't data and don't count."""
+    from engine.executor import StepError, resolve
+
+    by_id = {s.id: s for s in q.gold_sources}
+    errors = []
+    for ref in _refs(by_id[sid].arguments):
+        try:
+            found = resolve(ref, results)
+        except StepError as exc:
+            return [str(exc)]
+        source = by_id[re.match(r"^\$(s\d+)", ref).group(1)]
+        for cents in found if isinstance(found, list) else [found]:
+            if _on_sheet(Decimal(str(cents)) / 100, sheet):
+                continue
+            if _is_calculation(source.tool) and depth < 5:
+                errors += _input_errors(q, source.id, results, sheet, depth + 1)
+            else:
+                errors.append(f"input {ref} = ${abs(Decimal(str(cents)) / 100):,.2f} isn't on the sheet")
+    return errors
+
+
+def independence_errors(q: Question, sheets: dict[str, str], results: dict | None = None) -> list[str]:
     """Why `q` can't be independent (empty: it can): asked by a demo customer, with
-    numbers from the data, every one of them in that customer's fact sheet."""
+    numbers from the data, each one on that customer's fact sheet, or (a calculated
+    total) every one of its inputs on the sheet. Calculations need `results` (--data)."""
     if q.asked_as not in sheets:
         return [f"independent: {q.asked_as} has no fact sheet"]
     numbers = data_numbers(q)
     if not numbers:
         return ["independent: no expected numbers come from the data"]
-    sheet = sheets[q.asked_as]
-    return [f"independent: {n.value} ({n.what}) isn't in {q.asked_as}'s fact sheet"
-            for n in numbers if f"${abs(Decimal(str(n.value))):,.2f}" not in sheet]
+    sheet, by_id, errors = sheets[q.asked_as], {s.id: s for s in q.gold_sources}, []
+    for n in numbers:
+        source = by_id[re.match(r"^\$(s\d+)", n.path).group(1)]
+        if _on_sheet(n.value, sheet):
+            continue
+        if not _is_calculation(source.tool):
+            errors.append(f"independent: {n.value} ({n.what}) isn't in {q.asked_as}'s fact sheet")
+        elif results is None:
+            errors.append(f"independent: {n.value} ({n.what}) is calculated; --data checks its inputs")
+        else:
+            errors += [f"independent: {n.value} ({n.what}): {e}" for e in _input_errors(q, source.id, results, sheet)]
+    return errors
 
 
-def mark_independent(path: Path, sheets: dict[str, str]) -> int:
-    """Set "independent": true on every question that qualifies; returns how many are."""
+def calculation_inputs(q: Question, results: dict, sheet: str) -> list[str]:
+    """The fact-sheet figures a question's calculated numbers rest on: what the
+    independence check relied on (a total on the sheet stops the walk)."""
+    from engine.executor import resolve
+
+    by_id, out = {s.id: s for s in q.gold_sources}, []
+
+    def walk(sid: str, depth: int = 0) -> None:
+        for ref in _refs(by_id[sid].arguments):
+            found, source = resolve(ref, results), by_id[re.match(r"^\$(s\d+)", ref).group(1)]
+            for cents in found if isinstance(found, list) else [found]:
+                dollars = Decimal(str(cents)) / 100
+                if _on_sheet(dollars, sheet):
+                    out.append(f"${abs(dollars):,.2f}")
+                elif _is_calculation(source.tool) and depth < 5:
+                    walk(source.id, depth + 1)
+
+    for n in data_numbers(q):
+        source = by_id[re.match(r"^\$(s\d+)", n.path).group(1)]
+        if _is_calculation(source.tool) and not _on_sheet(n.value, sheet):
+            walk(source.id)
+    return out
+
+
+def mark_independent(path: Path, sheets: dict[str, str], runs: dict | None = None) -> int:
+    """Set "independent": true on every question that qualifies (calculated totals only
+    with `runs`, each question's source results from --data); returns how many are."""
     lines, count = [], 0
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
         raw = json.loads(line)
         try:
-            ok = not independence_errors(Question.model_validate(raw), sheets)
+            q = Question.model_validate(raw)
+            ok = not independence_errors(q, sheets, (runs or {}).get(q.id))
         except ValidationError:
             ok = False  # load() reports it
         if ok:
@@ -336,8 +435,9 @@ def _family(filename: str) -> str:
     return re.sub(r"-\d{4}(?=\.\w+$)", "", filename)
 
 
-def data_errors(q: Question, sources) -> list[str]:
-    """Run the question's gold sources as its asker; check each one and every number."""
+def data_errors(q: Question, sources, results: dict | None = None) -> list[str]:
+    """Run the question's gold sources as its asker; check each one and every number.
+    `results`, if given, is filled with each source's result (for the independence check)."""
     from bank.synthetic import BANK_ORG
     from db.access import Access
     from engine.executor import StepError, resolve
@@ -345,7 +445,8 @@ def data_errors(q: Question, sources) -> list[str]:
 
     access = (Access(org_id=BANK_ORG, clearance=2, role="admin") if q.asked_as == "staff"
               else Access(org_id=BANK_ORG, clearance=0, customer_id=q.asked_as))
-    results, errors, documents = {}, [], []
+    results = {} if results is None else results
+    errors, documents = [], []
     for s in q.gold_sources:
         if s.kind == "document":
             doc = sources.document(access, s.file, s.section)
@@ -381,21 +482,28 @@ def main() -> int:
     parser.add_argument("file", nargs="?", default=str(QUESTIONS))
     parser.add_argument("--data", action="store_true", help="also check sources and numbers on the database")
     parser.add_argument("--mark-independent", action="store_true",
-                        help="mark every question whose data numbers are in the fact sheet as independent")
+                        help="mark every question whose data numbers (or a total's inputs) are in the fact sheet")
     args = parser.parse_args()
-    sheets = fact_sheet()
-    if args.mark_independent:
-        print(f"marked {mark_independent(Path(args.file), sheets)} question(s) independent")
-    questions, errors = load(Path(args.file))
-    by_question = {q.id: shape_errors(q) + (independence_errors(q, sheets) if q.independent else [])
-                   for q in questions}
+    path, sheets = Path(args.file), fact_sheet()
+    questions, errors = load(path)
+    by_question = {q.id: shape_errors(q) + canary_errors(q, sheets) for q in questions}
+    runs: dict[str, dict] = {}
     if args.data:
         from config import get_settings
         from deps import get_store
 
         sources = NeonSources(get_store().engine, get_settings().demo_today)
         for q in questions:
-            by_question[q.id] += data_errors(q, sources)
+            by_question[q.id] += data_errors(q, sources, runs.setdefault(q.id, {}))
+    if args.mark_independent:
+        print(f"marked {mark_independent(path, sheets, runs if args.data else None)} question(s) independent")
+        questions, _ = load(path)
+    unchecked = []  # without --data, a calculated total's inputs can't be checked: noted, not an error
+    for q in questions:
+        if q.independent:
+            found = independence_errors(q, sheets, runs.get(q.id) if args.data else None)
+            unchecked += [q.id for e in found if e.endswith("--data checks its inputs")][:1]
+            by_question[q.id] += [e for e in found if not e.endswith("--data checks its inputs")]
     mix = mix_errors(questions)
     print(f"{len(questions)} questions, {sum(q.independent for q in questions)} independent (target "
           f"{INDEPENDENT_TARGET})" + ("" if args.data else "; format and mix only, --data checks the data"))
@@ -406,6 +514,13 @@ def main() -> int:
     for qid, problems in by_question.items():
         for p in problems:
             print(f"ERROR {qid}: {p}")
+    for q in questions:
+        for w in app_warnings(q):
+            print(f"WARN  {q.id}: {w}")
+        if args.data and q.independent and any(_is_calculation(s.tool) for s in q.gold_sources):
+            print(f"INPUT {q.id}: {', '.join(calculation_inputs(q, runs[q.id], sheets[q.asked_as]))}")
+    if unchecked:
+        print(f"NOTE  {len(unchecked)} independent total(s) checked only with --data: {', '.join(unchecked)}")
     for p in mix:
         print(f"MIX   {p}")
     bad = errors or any(by_question.values())

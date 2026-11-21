@@ -16,7 +16,11 @@ cd .. && backend/.venv/Scripts/python scripts/neon.py run -- python -m eval.ques
 
 `backend/eval/customer_facts.md` is each demo customer's fact sheet: accounts and balances, every fee with the transaction that caused it, money out by category for the last three months, the largest transactions, card payments and late fees, and holdings. It is built with plain SQL as the database owner (`python -m eval.customer_facts`, through `scripts/neon.py run`), none of the app's tools or access code, so a question whose numbers come from it checks the app against something the app didn't compute.
 
-Take a question's expected numbers from the sheet and mark it `"independent": true` (or run `python -m eval.questions --mark-independent`, which marks every question that qualifies). The validator checks that every number from the data (not the ones from a document) is in that customer's sheet. Aim for at least 5.
+Take a question's expected numbers from the sheet and mark it `"independent": true` (or run `python -m eval.questions --data --mark-independent`, which marks every question that qualifies). The validator checks that every number from the data (not the ones from a document) is in that customer's sheet. A calculated total (from `total` or `afford`) counts when every input it rests on is on the sheet: each fee or transaction, or a total the sheet itself shows (April's groceries); constants from the question ($250 to spend) aren't data. That needs `--data`, and its notes list the inputs. Aim for at least 5.
+
+**Canaries.** `expected_answer.must_not_contain` lists strings the answer must never contain, such as another customer's balance in a cross-customer attack. The validator checks each is on the fact sheet of a customer the question names.
+
+**When the app would get it wrong.** For refusal-advice and refusal-money-movement questions, the validator warns (it doesn't fail) when the app's own classifier wouldn't recognise the question ("the better buy", a casual "can you just move $100 over"): the eval set is meant to hold questions the app gets wrong, and the warning says what failure to expect.
 
 ## What makes a good question
 
