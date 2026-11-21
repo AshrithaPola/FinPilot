@@ -1227,6 +1227,27 @@ Where they fit, and nothing else moved:
   the question asks for a recommendation (`graph.routing.asks_for_advice`,
   code); a fact question about VTI gets the facts.
 
+## Langfuse follow-ups (2026-11-21)
+
+- **Who asked, hashed:** the access object (user, Firebase, org, team and
+  customer ids) reached Langfuse in the clear. Those fields, under any
+  name in any observation, are now salted one-way hashes
+  ("user:3f9a...", OBSERVABILITY_SALT in .env; unset, "[id]"), and the
+  trace's user is that hash, so a user's traces group without the id.
+- **A trace reads as the pipeline:** about 36 observations per question,
+  mostly LangChain plumbing. A Langfuse handler subclass
+  (`observability.py`) leaves framework runs out (sequences, lambdas,
+  parallel maps, output parsers, LangGraph's hidden channel writes) and
+  hangs their children on the nearest named step: the nodes (now
+  intake, route, plan, execute, replan, summarize, validate: "validate"
+  checks the answer, "intake" reads the question), llm:<role>,
+  tool:<name> and search.
+- **Fee "why" questions search the fee schedule first:** code sets
+  doc_type fee_schedule on the plan's first search (or adds one); a weak
+  result still widens to every type. The $15 question now cites the
+  schedule's "more than $50.00" rule (trace 75b2de2f, 11.3 s, 3 calls).
+- **Screenshots** in `docs/screenshots/`, shown in the README.
+
 ## Phase 10 notes (from 2026-11-14)
 
 - **Reranker and tables.** The cross-encoder demoted table-row chunks

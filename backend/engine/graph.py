@@ -1,6 +1,6 @@
 """The reasoning engine (Phases 6-7): plan, execute, summarize, check, as a LangGraph.
 
-    validate ──(rejected)──> END
+     intake ──(rejected)──> END
        │
      route ──(small talk, moving money)──> END              (code, no LLM)
        │
@@ -12,7 +12,7 @@
        │
    summarize <────────┐                                     (LLM: the summarization agent)
        │              │ (a check failed, first time: regenerate with the reason)
-     check ───────────┘                                     (code checks, then LLM: gatekeeper, auditor
+   validate ──────────┘                                     (code checks, then LLM: gatekeeper, auditor
        │                                                     and strategist in one call)
       END  (passed, or refused after the second failure)
 
@@ -39,7 +39,7 @@ from config import get_settings
 from deps import get_accounts_tools, get_llm, get_market_tools, get_store
 from engine.checks import VALIDATOR_SCHEMA, VALIDATOR_SYSTEM, VALIDATORS, code_checks, verdict_from
 from engine.executor import Executor
-from engine.plan import PLAN_SCHEMA, REPLAN_SYSTEM, Plan, parse_plan, planner_prompt
+from engine.plan import PLAN_SCHEMA, REPLAN_SYSTEM, Plan, parse_plan, planner_prompt, prefer_fee_schedule
 from graph.redaction import redact
 from graph.routing import (MONEY_MOVEMENT_RESPONSE, SMALL_TALK_RESPONSE, asks_for_advice, is_money_movement,
                            is_small_talk)
@@ -173,7 +173,7 @@ async def plan_node(state: EngineState) -> dict:
     reply = await get_llm().complete_json(
         get_settings().grading_model, _planner_system(),
         f"Today is {_today()}.\nQuestion: {state['question']}", PLAN_SCHEMA, max_tokens=2048, role="planner")
-    plan = parse_plan(reply)
+    plan = prefer_fee_schedule(parse_plan(reply), state["question"])
     tracing.notify(_plan_event(plan, 1))
     return {"plan": plan, "llm_calls": state.get("llm_calls", []) + ["planner"],
             "timings": _timed(state, "plan_ms", start)}
@@ -345,19 +345,20 @@ def _traced(name: str, node):
 
 def build_engine():
     graph = StateGraph(EngineState)
-    for name, node in (("validate", validate_node), ("route", route_node), ("plan", plan_node),
+    # The names a trace shows (Postgres and Langfuse): intake reads the question, validate checks the answer.
+    for name, node in (("intake", validate_node), ("route", route_node), ("plan", plan_node),
                        ("execute", execute_node), ("replan", replan_node), ("summarize", summarize_node),
-                       ("check", check_node)):
+                       ("validate", check_node)):
         graph.add_node(name, _traced(name, node))
-    graph.set_entry_point("validate")
-    graph.add_conditional_edges("validate", lambda s: END if s.get("rejection") else "route")
+    graph.set_entry_point("intake")
+    graph.add_conditional_edges("intake", lambda s: END if s.get("rejection") else "route")
     graph.add_conditional_edges("route", lambda s: "plan" if s["route"] == "plan" else END)
     graph.add_edge("plan", "execute")
     graph.add_conditional_edges("execute", lambda s: "replan" if _needs_replan(s) else "summarize")
     graph.add_edge("replan", "execute")
     # Every written answer is checked; the fixed replies (out of scope, nothing found) aren't.
-    graph.add_conditional_edges("summarize", lambda s: "check" if s["outcome"] in ("answered", "uncited") else END)
-    graph.add_conditional_edges("check", _after_check)
+    graph.add_conditional_edges("summarize", lambda s: "validate" if s["outcome"] in ("answered", "uncited") else END)
+    graph.add_conditional_edges("validate", _after_check)
     return graph.compile()
 
 
@@ -371,8 +372,11 @@ async def answer(question: str, principal) -> dict:
     # Langfuse (when configured) sees the run through its LangChain callback
     # handler, masked; the trace id ties it to the full trace in Postgres.
     role = "customer" if getattr(principal, "customer_id", None) else "staff"
+    user = getattr(principal, "user_id", None)
     config = {"callbacks": observability.callbacks(), "run_name": "finpilot-ask",
               "metadata": {"langfuse_tags": ["finpilot", role],
+                           # The user as a salted hash: traces group by user, the id stays here.
+                           **({"langfuse_user_id": observability.pseudonym(user)} if user else {}),
                            "langfuse_session_id": trace.trace_id if trace else None,
                            "finpilot_trace_id": trace.trace_id if trace else None}}
     with track_usage() as usage:  # tokens per role

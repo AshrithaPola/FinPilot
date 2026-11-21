@@ -95,11 +95,14 @@ class Recorder(BaseCallbackHandler):
     def __init__(self):
         self.events = []
 
+    def on_chain_start(self, serialized, inputs, **kwargs):
+        self.events.append(("chain", kwargs.get("name") or (serialized or {}).get("name")))
+
     def on_tool_start(self, serialized, input_str, **kwargs):
         self.events.append(("tool", kwargs.get("name") or (serialized or {}).get("name")))
 
     def on_retriever_start(self, serialized, query, **kwargs):
-        self.events.append(("retriever", query))
+        self.events.append(("retriever", kwargs.get("name"), query))
 
 
 class OneChunkStore:
@@ -127,4 +130,60 @@ async def test_the_engine_run_reaches_langchain_callbacks_as_tool_and_retriever_
     llm.answer = "Checking has $3,452.02 as of 2026-06-30 [1]; the overdraft fee is $15.00 [2]."
     result = await engine_graph.answer("What's my balance, and what's the overdraft fee?", object())
     assert result["outcome"] == "answered"
-    assert ("tool", "get_balance") in recorder.events and ("retriever", "overdraft fee") in recorder.events
+    # Our steps, by the names a trace shows them.
+    assert ("tool", "tool:get_balance") in recorder.events and ("retriever", "search", "overdraft fee") in recorder.events
+    chains = {name for kind, name, *_ in recorder.events if kind == "chain"}
+    assert {"finpilot-ask", "intake", "route", "plan", "execute", "summarize", "validate"} <= chains
+
+
+def _salted(monkeypatch, salt):
+    import config
+
+    monkeypatch.setenv("OBSERVABILITY_SALT", salt)
+    config.get_settings.cache_clear()
+
+
+def test_the_access_object_is_sent_as_one_way_hashes(monkeypatch):
+    from auth import Principal
+
+    _salted(monkeypatch, "test-salt")
+    asker = Principal(user_id="5b7f0c1e-0b6a-4f39-9d36-8c1e2f0a9b11", firebase_uid="fbUid0036abcdefghijklmnopq",
+                      org_id="finpilot-bank", role="viewer", clearance=0, team_ids=("team-retail",),
+                      customer_id="cust-0036")
+    out = observability.mask(data={"question": "q", "access": asker})
+    text = _text(out)
+    for raw in ("5b7f0c1e-0b6a-4f39-9d36-8c1e2f0a9b11", "fbUid0036abcdefghijklmnopq", "finpilot-bank",
+                "team-retail", "cust-0036"):
+        assert raw not in text, raw
+    access = out["access"]
+    assert access["user_id"].startswith("user:") and access["org_id"].startswith("org:")
+    assert access["team_ids"][0].startswith("team:") and access["customer_id"].startswith("customer:")
+    assert access["role"] == "viewer" and access["clearance"] == 0  # not identifiers: kept
+    # The same user groups together; another user doesn't; nothing can be read back.
+    assert observability.mask(data={"access": asker})["access"]["user_id"] == access["user_id"]
+    assert observability.pseudonym("someone-else") != access["user_id"]
+
+
+def test_without_a_salt_identifiers_are_masked_outright(monkeypatch):
+    _salted(monkeypatch, "")
+    assert observability.mask(data={"user_id": "u-1", "firebase_uid": "fb-1"}) == {"user_id": "[id]",
+                                                                                  "firebase_uid": "[id]"}
+
+
+def test_framework_runs_are_left_out_and_their_children_move_up():
+    for name in ("RunnableSequence", "RunnableParallel<raw>", "RunnableLambda", "JsonOutputParser",
+                 "ChannelWrite<execute>", "<unknown>"):
+        assert observability.is_framework_run(name), name
+    for name in ("plan", "execute", "validate", "llm:validator", "tool:get_balance", "search", "finpilot-ask"):
+        assert not observability.is_framework_run(name), name
+    assert observability.is_framework_run("anything", tags=["langsmith:hidden"])
+
+    from uuid import uuid4
+
+    handler_class = observability._pipeline_handler_class()
+    handler = handler_class.__new__(handler_class)  # no Langfuse client needed for the tree logic
+    node, sequence, parser = uuid4(), uuid4(), uuid4()
+    handler._runs, handler._langfuse_client = {node: "the plan node's observation"}, "the trace"
+    handler._skipped = {sequence: node, parser: sequence}  # a node > a sequence > a parser
+    assert handler._get_parent_observation(parser) == "the plan node's observation"
+    assert handler._get_parent_observation(uuid4()) == "the trace"

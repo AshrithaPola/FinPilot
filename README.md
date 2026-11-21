@@ -4,6 +4,18 @@ A banking assistant for the customers of a fictional bank. It answers from the c
 
 **Status: Phases 0 to 9 of 12 are built** (data, ingestion, Neon, tools, the reasoning engine, validation, tracing, the chat UI). Next: evaluation (10), red-teaming (11), deployment (12). The plan and its architecture checklist are in [docs/FINPILOT_PLAN.md](docs/FINPILOT_PLAN.md); what each commit did, with measurements and design decisions, is in [docs/PROGRESS.md](docs/PROGRESS.md). FinPilot grew out of an earlier document-QA project; its retrieval core and access model carried over.
 
+## Screens
+
+A signed-in demo customer (synthetic data) asking why they were charged $15: the answer cites their fee, the transaction that caused it and the fee schedule's rule.
+
+![FinPilot answering a fee question, light theme](docs/screenshots/desktop-light.png)
+
+| Dark theme | "How I got this" (the plan, the checks, where the time went) | Phone, 375 px |
+|---|---|---|
+| ![Dark theme](docs/screenshots/desktop-dark.png) | ![How I got this](docs/screenshots/desktop-how-i-got-this.png) | ![Phone layout](docs/screenshots/mobile.png) |
+
+Before the UI polish, for comparison: [desktop](docs/screenshots/before-desktop.png), [phone](docs/screenshots/before-mobile.png).
+
 ## How a question is answered
 
 ```

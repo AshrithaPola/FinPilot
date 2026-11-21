@@ -485,3 +485,47 @@ async def test_only_a_request_for_a_recommendation_gets_the_cant_recommend_line(
     facts, advice = [c["user"] for c in llm.chat_calls if c["role"] == "summarizer"]
     assert engine_graph.ADVICE_ASKED not in facts and engine_graph.ADVICE_ASKED in advice
     assert "Only when the context says the question asks" in llm.chat_calls[1]["system"]
+
+
+class TypeRecordingStore:
+    """Records each search's doc_type; the fee schedule's cushion rule answers."""
+
+    def __init__(self):
+        self.types = []
+
+    def scoped(self, principal):
+        return self
+
+    async def search(self, query, filters=None):
+        self.types.append(filters.doc_type)
+        return [_hit("Overdraft fee $15.00 per item when the overdraft is more than the $50.00 cushion.",
+                     "fee-schedule-2026.md", "Fees > 1. Everyday Checking", 6.0, "f1")]
+
+
+async def test_a_fee_why_question_searches_the_fee_schedule_first(engine, monkeypatch):
+    llm, _ = engine
+    store = TypeRecordingStore()
+    monkeypatch.setattr(engine_graph, "get_store", lambda: store)
+    # The planner forgot the type (the walkthrough's case: it found the deposit agreement instead).
+    llm.plan = {"intent": "explain a fee", "out_of_scope": False, "steps": [
+        _step("s1", "financial_data", "list_fees", {"start": "2026-04-06", "end": "2026-04-06"}),
+        _step("s2", "documents", "search", {"query": "overdraft fee cushion per item"})]}
+    llm.answer = ("You were charged $15 on April 6, 2026 [1] because the account was overdrawn by more than "
+                  "the $50.00 cushion [2].")
+    result = await engine_graph.answer("Why was I charged $15 on April 6, 2026?", ME)
+    assert store.types[0] == "fee_schedule" and result["outcome"] == "answered"
+    assert result["citations"][1]["filename"] == "fee-schedule-2026.md"
+
+
+def test_a_fee_why_plan_without_a_search_gets_one_in_the_fee_schedule():
+    from engine.plan import prefer_fee_schedule
+
+    plan = parse_plan({"intent": "x", "out_of_scope": False, "steps": [
+        _step("s1", "financial_data", "list_fees", {"start": "2026-04-06", "end": "2026-04-06"})]})
+    plan = prefer_fee_schedule(plan, "Why was I charged $15 on April 6, 2026?")
+    [search] = [s for s in plan.steps if s.agent == "documents"]
+    assert search.id == "s2" and search.arguments["doc_type"] == "fee_schedule"
+    other = parse_plan({"intent": "x", "out_of_scope": False, "steps": [
+        _step("s1", "documents", "search", {"query": "fraud rules memo"})]})
+    assert prefer_fee_schedule(other, "What does the fraud rules memo say?").steps[0].arguments == {
+        "query": "fraud rules memo"}  # not a fee question: untouched

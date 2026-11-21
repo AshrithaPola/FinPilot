@@ -69,7 +69,7 @@ async def test_the_engine_traces_its_stages_steps_and_checks(engine):  # noqa: F
     llm.answer = GOOD
     with tracing.tracing() as trace:
         result = await engine_graph.answer(AFFORD, ME)
-    assert [t["stage"] for t in result["timeline"]] == ["validate", "route", "plan", "execute", "summarize", "check"]
+    assert [t["stage"] for t in result["timeline"]] == ["intake", "route", "plan", "execute", "summarize", "validate"]
     assert result["trace_id"] == trace.trace_id
     kinds = [(s["kind"], s["name"]) for s in trace.spans]
     assert ("step", "financial_data.get_balance") in kinds and ("tool", "get_balance") in kinds

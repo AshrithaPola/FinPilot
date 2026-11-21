@@ -15,13 +15,13 @@ const VALIDATORS: Record<string, string> = {
   strategist: "No advice, no money moved, nothing about anyone else",
 };
 const STAGES: Record<string, string> = {
-  validate: "Read the question",
+  intake: "Read the question",
   route: "Route",
   plan: "Plan",
   execute: "Run the steps",
   replan: "Re-plan",
   summarize: "Write the answer",
-  check: "Check the answer",
+  validate: "Check the answer",
 };
 
 function seconds(ms: number | undefined): string {

@@ -325,7 +325,8 @@ class Executor:
     async def _traced_search(store, query: str, filters: Filters) -> list:
         with tracing.span("search", query[: tracing.MAX_TEXT]) as span:
             # Through the store's LangChain retriever (callbacks see it as a retriever run).
-            hits = [chunk_of(d) for d in await StoreRetriever(store=store, filters=filters).ainvoke(query)]
+            hits = [chunk_of(d) for d in await StoreRetriever(store=store, filters=filters).ainvoke(
+                query, config={"run_name": "search"})]
             scores = [h.rerank_score for h in hits if h.rerank_score is not None]
             span.update(hits=len(hits), top_rerank=max(scores) if scores else None, weak=weak(query, hits),
                         sections=[f"{h.filename} > {h.section}"[:120] for h in hits[:3]])

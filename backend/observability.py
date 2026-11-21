@@ -12,7 +12,17 @@ input, output and metadata value goes through `mask` first, which replaces
     merchant / description field);
   - account, card, transaction and fee ids, and customer ids (cust-0036...);
   - customer names (the synthetic first and last names, full_name fields)
-    and email addresses; card last-4 digits.
+    and email addresses; card last-4 digits;
+  - who asked: the user, Firebase, org, team and customer ids in the access
+    object (and anywhere else under those names) become salted one-way
+    hashes ("user:3f9a..."), so a user's traces still group together
+    without the id itself leaving (OBSERVABILITY_SALT; unset, "[id]").
+
+The trace reads as our pipeline: LangChain's internals (sequences,
+lambdas, parallel maps, output parsers, LangGraph's channel writes) are
+left out, and their children hang on the nearest step we name: the
+nodes (intake, route, plan, execute, replan, summarize, validate),
+llm:<role>, tool:<name> and search.
 
 The full, access-controlled record of every request stays in Postgres
 (tracing.py, the traces table under row-level security). Langfuse is on
@@ -21,6 +31,8 @@ only when LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY and LANGFUSE_BASE_URL
 nothing is sent.
 """
 import dataclasses
+import hashlib
+import hmac
 import re
 from functools import lru_cache
 
@@ -42,6 +54,19 @@ _TEXT_FIELD = re.compile(r'("(?:merchant|description|full_name|email|last4)")(\s
 _MONEY_KEYS = ("_cents", "_dollars")
 _FIELD_MASKS = {"amount": AMOUNT, "balance": AMOUNT, "merchant": MERCHANT, "description": MERCHANT,
                 "full_name": NAME, "email": EMAIL, "last4": MASKED}
+# Identifiers of who asked (auth.Principal, db.access.Access): hashed, with what they are.
+_IDENTIFIERS = {"user_id": "user", "firebase_uid": "user", "org_id": "org", "team_ids": "team",
+                "customer_id": "customer", "uploaded_by": "user"}
+
+
+def pseudonym(value, kind: str = "user") -> str:
+    """A salted one-way hash of an id: the same id always gives the same
+    pseudonym (traces group by user), and it can't be turned back."""
+    salt = get_settings().observability_salt
+    if not salt or value in (None, ""):
+        return ID
+    digest = hmac.new(salt.encode(), f"{kind}:{value}".encode(), hashlib.sha256).hexdigest()[:16]
+    return f"{kind}:{digest}"
 
 
 def mask_text(text: str) -> str:
@@ -56,6 +81,12 @@ def mask_text(text: str) -> str:
 
 def _field(key, value):
     name = str(key).casefold()
+    if name in _IDENTIFIERS:
+        if value is None:
+            return None
+        if isinstance(value, (list, tuple, set)):
+            return [pseudonym(v, _IDENTIFIERS[name]) for v in value]
+        return pseudonym(value, _IDENTIFIERS[name])
     if name.endswith(_MONEY_KEYS) or name in _FIELD_MASKS:
         if value is None:
             return None
@@ -99,15 +130,64 @@ def _client(public_key: str, secret_key: str, base_url: str):
     return Langfuse(public_key=public_key, secret_key=secret_key, base_url=base_url, mask=mask)
 
 
+# LangChain and LangGraph plumbing: never an observation of its own.
+_FRAMEWORK_PREFIXES = ("Runnable", "ChannelWrite", "ChannelRead", "Branch<", "_write", "_route")
+_FRAMEWORK_SUFFIXES = ("OutputParser", "Parser")
+HIDDEN_TAG = "langsmith:hidden"  # LangGraph tags its own internals with it
+
+
+def is_framework_run(name: str, tags=None) -> bool:
+    return (HIDDEN_TAG in (tags or ()) or name.startswith(_FRAMEWORK_PREFIXES)
+            or name.endswith(_FRAMEWORK_SUFFIXES) or name == "<unknown>")
+
+
+@lru_cache
+def _pipeline_handler_class():
+    from langfuse.langchain import CallbackHandler
+
+    class PipelineHandler(CallbackHandler):
+        """Langfuse's LangChain handler, showing our pipeline: a framework
+        run gets no observation, and its children attach to the nearest
+        run that has one (the root run is always kept)."""
+
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self._skipped: dict = {}  # skipped run id -> its parent run id
+
+        def _get_parent_observation(self, parent_run_id):
+            while parent_run_id in self._skipped:
+                parent_run_id = self._skipped[parent_run_id]
+            return super()._get_parent_observation(parent_run_id)
+
+        def on_chain_start(self, serialized, inputs, *, run_id, parent_run_id=None, tags=None, metadata=None,
+                           **kwargs):
+            if parent_run_id is not None and is_framework_run(self.get_langchain_run_name(serialized, **kwargs), tags):
+                self._track_run(run_id=run_id, parent_run_id=parent_run_id, metadata=metadata)
+                self._skipped[run_id] = parent_run_id
+                return None
+            return super().on_chain_start(serialized, inputs, run_id=run_id, parent_run_id=parent_run_id, tags=tags,
+                                          metadata=metadata, **kwargs)
+
+        def on_chain_end(self, outputs, *, run_id, parent_run_id=None, **kwargs):
+            if run_id in self._skipped:
+                return None
+            return super().on_chain_end(outputs, run_id=run_id, parent_run_id=parent_run_id, **kwargs)
+
+        def on_chain_error(self, error, *, run_id, parent_run_id=None, tags=None, **kwargs):
+            if run_id in self._skipped:
+                return None
+            return super().on_chain_error(error, run_id=run_id, parent_run_id=parent_run_id, tags=tags, **kwargs)
+
+    return PipelineHandler
+
+
 def callbacks() -> list:
     """The LangChain callbacks for one engine run: Langfuse's handler, or none."""
     keys = _configured()
     if keys is None:
         return []
-    from langfuse.langchain import CallbackHandler
-
     _client(*keys)
-    return [CallbackHandler(public_key=keys[0])]
+    return [_pipeline_handler_class()(public_key=keys[0])]
 
 
 def flush() -> None:

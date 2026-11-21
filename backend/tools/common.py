@@ -69,7 +69,7 @@ def langchain_tool(tool: Tool, run: Callable[[dict], list[dict]]):
 def run_langchain_tool(tool, arguments: dict):
     """Invoke a LangChain tool, refusing bad arguments with our own ToolError."""
     try:
-        return tool.invoke(arguments)
+        return tool.invoke(arguments, config={"run_name": f"tool:{tool.name}"})
     except ValidationError as exc:
         raise invalid_arguments(tool.name, exc) from None
 

@@ -83,7 +83,7 @@ def test_each_ask_is_traced_and_only_its_orgs_admins_see_it(bank, app_env):
         _step("s2", "documents", "search", {"query": "overdraft fee cushion"})]}
     app_env.answer = "Your checking balance is known [1]; the overdraft fee is $15.00 [2]."
     body = bank.post("/ask", headers=_as("uid-cust-1"), json={"question": "Balance? Fee?"}).json()
-    assert [t["stage"] for t in body["timeline"]][:4] == ["validate", "route", "plan", "execute"]
+    assert [t["stage"] for t in body["timeline"]][:4] == ["intake", "route", "plan", "execute"]
     assert body["trace"]["embedding_calls"] == 0  # the fake embedder isn't a priced model call
 
     listed = bank.get("/admin/traces", headers=_as("uid-staff")).json()["traces"]

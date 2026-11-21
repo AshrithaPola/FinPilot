@@ -99,7 +99,7 @@ def test_the_stream_shows_the_plan_each_stage_and_step_then_the_checked_answer(c
     assert [s["tool"] for s in plan["steps"]] == ["search", "total"]
     stages = [(e["stage"], e["state"]) for e in events if e["type"] == "stage"]
     assert stages == [("plan", "start"), ("plan", "done"), ("summarize", "start"), ("summarize", "done"),
-                      ("check", "start"), ("check", "done")]
+                      ("validate", "start"), ("validate", "done")]
     steps = [(e["id"], e["label"], e["state"]) for e in events if e["type"] == "step"]
     assert steps == [("s1", "Searching documents", "start"), ("s1", "Searching documents", "done"),
                      ("s2", "Calculating", "start"), ("s2", "Calculating", "done")]
@@ -107,7 +107,7 @@ def test_the_stream_shows_the_plan_each_stage_and_step_then_the_checked_answer(c
     assert kinds.index("done") > max(i for i, e in enumerate(events) if e["type"] == "stage")
     done = events[-1]
     assert done["answer"] == ANSWER and done["outcome"] == "answered" and isinstance(done["query_id"], int)
-    assert [t["stage"] for t in done["timeline"]][-1] == "check" and done["demo_today"] == "2026-06-30"
+    assert [t["stage"] for t in done["timeline"]][-1] == "validate" and done["demo_today"] == "2026-06-30"
 
 
 def test_a_model_timeout_is_a_friendly_retryable_message(client, app_env, pg_url):

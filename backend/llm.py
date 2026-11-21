@@ -263,12 +263,13 @@ class GeminiLLM(_BackoffLLM):
         return gemini_retry_delay(exc)
 
     @staticmethod
-    def _request(runnable, messages):
+    def _request(runnable, messages, role: str = ""):
         """One LangChain call that raises the Gemini error itself, as the
         gateway always has (LangChain re-raises it as its own types)."""
         async def run():
             try:
-                return await runnable.ainvoke(messages)
+                # Named for the trace (Langfuse): llm:planner, llm:summarizer, llm:validator...
+                return await runnable.ainvoke(messages, config={"run_name": f"llm:{role or 'call'}"})
             except Exception as exc:
                 api = _api_error(exc)
                 if api is not None and api is not exc:
@@ -310,7 +311,7 @@ class GeminiLLM(_BackoffLLM):
     ) -> str:
         chat = self._chat(model, max_tokens)
         messages = [SystemMessage(system), HumanMessage(user)]
-        response = await self._call(model, self._request(chat, messages), role)
+        response = await self._call(model, self._request(chat, messages, role), role)
         return self._usable_text(model, response, "generation") or ""
 
     async def complete_json(
@@ -325,7 +326,7 @@ class GeminiLLM(_BackoffLLM):
         content = ([{"type": "image_url", "image_url": f"data:image/png;base64,{base64.b64encode(image).decode()}"},
                     {"type": "text", "text": user}] if image else user)
         messages = [SystemMessage(system), HumanMessage(content)]
-        result = await self._call(model, self._request(structured, messages), role)
+        result = await self._call(model, self._request(structured, messages, role), role)
         if self._usable_text(model, result.get("raw"), "checker") is None:
             return {}
         parsed = result.get("parsed")

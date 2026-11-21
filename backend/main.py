@@ -101,7 +101,7 @@ FRIENDLY_ERRORS = {
 
 # The stage a customer sees for each engine node and agent (live, over SSE).
 NODE_LABELS = {"plan": "Planning", "replan": "Re-planning", "summarize": "Writing the answer",
-               "check": "Checking the answer"}
+               "validate": "Checking the answer"}
 AGENT_LABELS = {"documents": "Searching documents", "calculation": "Calculating"}
 
 

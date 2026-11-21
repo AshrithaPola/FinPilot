@@ -10,6 +10,7 @@ or "$s2[*].amount_cents" (resolved in code, see executor.resolve), so the
 model never does the arithmetic.
 """
 import json
+import re
 from dataclasses import dataclass, field
 
 from tools import accounts, calculator, market
@@ -47,8 +48,8 @@ calculation result).
 
 How to plan common questions:
 - Explaining a charge ("why was I charged $15 on ..."): list_fees for that date, list_transactions
-  for that date (what caused it), and a documents search naming that fee and its rule (e.g.
-  "overdraft fee cushion per item", not just "fee schedule").
+  for that date (what caused it), and a documents search with doc_type "fee_schedule" naming that
+  fee and its rule (e.g. "overdraft fee cushion per item", not just "fee schedule").
 - Affordability ("can I afford $X and keep $Y"): get_balance with account_type "checking", then
   calculation afford with balance_cents "$s1[0].balance_cents".
 - Spending ("how much did I spend on groceries in May"): list_transactions with the category and
@@ -135,6 +136,31 @@ def planner_prompt(data_from: str, data_through: str, today: str) -> str:
     return PLANNER_SYSTEM.format(max_steps=MAX_STEPS, financial=_catalog(AGENT_TOOLS["financial_data"]),
                                  calculation=_catalog(AGENT_TOOLS["calculation"]),
                                  data_from=data_from, data_through=data_through, today=today)
+
+
+_FEE_WHY = re.compile(r"\bwhy\b.*\b(?:fee|fees|charged|charge)\b|\b(?:fee|fees|charged|charge)\b.*\bwhy\b",
+                      re.IGNORECASE | re.DOTALL)
+
+
+def prefer_fee_schedule(plan: Plan, question: str) -> Plan:
+    """A "why was I charged" question: the fee schedule holds the rule, so
+    the first search looks there (doc_type fee_schedule); a plan with no
+    search gets one. If the schedule has nothing on it, the executor's weak
+    search falls back to every document type."""
+    if plan.out_of_scope or not _FEE_WHY.search(question):
+        return plan
+    searches = [s for s in plan.steps if s.agent == "documents" and s.tool == "search"]
+    if not searches:
+        if len(plan.steps) < MAX_STEPS:
+            taken = {s.id for s in plan.steps}
+            sid = next(f"s{n}" for n in range(len(taken) + 1, 99) if f"s{n}" not in taken)
+            plan.steps.append(Step(sid, "documents", "search", {"query": question[:300], "doc_type": "fee_schedule"},
+                                   "the fee's rule in the fee schedule"))
+        return plan
+    first = searches[0]
+    if first.arguments.get("doc_type") != "fee_schedule":
+        first.arguments = {**first.arguments, "doc_type": "fee_schedule"}
+    return plan
 
 
 def parse_plan(reply: dict, taken: set[str] = frozenset(), round_: int = 1) -> Plan:

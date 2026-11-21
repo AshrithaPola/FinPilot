@@ -87,6 +87,10 @@ class Settings(BaseSettings):
     langfuse_secret_key: str | None = None
     langfuse_base_url: str | None = Field(default=None, validation_alias=AliasChoices(
         "LANGFUSE_BASE_URL", "LANGFUSE_HOST", "langfuse_base_url"))
+    # Salt for the one-way hashes that stand in for user, org and customer ids
+    # in Langfuse (the same user groups together, and can't be read back).
+    # Unset: those ids are masked outright.
+    observability_salt: str | None = None
 
     # --- Auth (auth.py) ---
     # Firebase project whose ID tokens are accepted. The service account key
