@@ -98,3 +98,24 @@ def test_each_ask_is_traced_and_only_its_orgs_admins_see_it(bank, app_env):
                                     bank.get("/admin/traces", headers=_as("uid-other-admin")).json()["traces"]}
     assert bank.get(f"/admin/traces/{body['trace_id']}", headers=_as("uid-other-admin")).status_code == 404
     assert bank.get("/admin/traces", headers=_as("uid-cust-1")).status_code == 403
+
+
+def test_the_accounts_summary_shows_only_the_callers_own_accounts(bank, pg_url):
+    owner = sa.create_engine(pg_url)
+    with owner.begin() as conn:
+        conn.execute(sa.text("INSERT INTO users (firebase_uid, org_id, role, clearance, customer_id) "
+                             "VALUES ('uid-cust-2', :org, 'viewer', 0, 'cust-0002')"), {"org": synthetic.BANK_ORG})
+    owner.dispose()
+    summaries = {}
+    for uid, customer in (("uid-cust-1", "cust-0001"), ("uid-cust-2", "cust-0002")):
+        response = bank.get("/accounts/summary", headers=_as(uid))
+        assert response.status_code == 200, response.text
+        body = summaries[customer] = response.json()
+        assert body["as_of"] == "2026-06-30"
+        assert body["balances"] and all(b["account_id"].startswith(f"{customer}-") for b in body["balances"])
+        assert 0 < len(body["transactions"]) <= 5
+        assert all(t["account_id"].startswith(f"{customer}-") for t in body["transactions"])
+        assert ("cust-0002" if customer == "cust-0001" else "cust-0001") not in json.dumps(body)
+    a, b = summaries["cust-0001"], summaries["cust-0002"]
+    assert not {t["txn_id"] for t in a["transactions"]} & {t["txn_id"] for t in b["transactions"]}
+    assert bank.get("/accounts/summary", headers=_as("uid-staff")).status_code == 404  # staff have no accounts
