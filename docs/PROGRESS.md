@@ -1115,6 +1115,15 @@ Three deliberately vague questions on Neon (cust-0036), traced:
     figure or citation in it, then gives the facts.
   - **Moving money** is a code route (`graph/routing.py is_money_movement`,
     no LLM call): "FinPilot is read-only and can't move money…".
+  - **The 10-Ks in force on the demo date:** Apple's and Microsoft's FY2026
+    10-Ks were filed after 2026-06-30 (Nov 3 and Jul 29), so the version rule
+    hid them and no Apple or Microsoft filing could be found. Their FY2025
+    10-Ks (filed 2025-10-31 and 2025-07-30) are now in `sources.yaml`, and a
+    filing is superseded by the same company's next filing of its kind
+    (`bank.public.superseded_dates`), so each day sees the filing that
+    existed then. A customer now sees 19 documents in force (24 loaded:
+    minus the two 2025 bank versions, the two FY2026 10-Ks not yet filed,
+    and the clearance-2 memo, which staff do see).
 - **Not run in a browser here:** this machine runs no Postgres or Docker,
   so the UI was checked with the type checker, lint and build, and the
   stream with the integration tests (`test_ask_flow.py`: event order, the

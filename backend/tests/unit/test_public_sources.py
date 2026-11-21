@@ -1,6 +1,6 @@
 """bank/public.py without the network: HTML to Markdown, 10-K item spans,
 page furniture, tables, attribution, and the committed source list."""
-from bank.public import blocks_of, item_span, load_sources, to_markdown
+from bank.public import blocks_of, item_span, load_sources, superseded_dates, to_markdown
 
 TEN_K = b"""<html><body>
 <div style="display:none"><ix:header>hidden XBRL</ix:header></div>
@@ -65,3 +65,13 @@ def test_every_committed_source_is_complete():
             assert {"cik", "accession", "document", "filed"} <= set(source), source["id"]
         else:
             assert source["url"].startswith("https://"), source["id"]
+
+
+def test_a_10k_is_superseded_by_the_same_companys_next_one():
+    from datetime import date
+
+    superseded = superseded_dates(load_sources())
+    assert superseded["aapl-10k-2025"] == date(2026, 11, 3)  # Apple's FY2026 10-K filed that day
+    assert superseded["msft-10k-2025"] == date(2026, 7, 29)
+    assert superseded["aapl-10k-2026"] is None and superseded["ko-10k-2025"] is None  # the latest
+    assert superseded["vti-summary-prospectus-2026"] is None  # another kind never supersedes it

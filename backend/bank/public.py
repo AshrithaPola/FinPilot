@@ -12,8 +12,9 @@ get a plain project User-Agent. Fetched text is never committed
 (data/SOURCES.md). Each document is HTML turned into Markdown (headings,
 paragraphs, tables as rows), opening with its attribution, then parsed and
 chunked like the bank's own documents, public (clearance 0) in the bank's
-org, with doc_type, department "public", version and effective date (the
-filing date) for the metadata filters.
+org, with doc_type, department "public", version, effective date (the
+filing date) and superseded date (the same company's next filing of that
+kind) for the metadata filters.
 """
 import argparse
 import asyncio
@@ -236,6 +237,19 @@ class PublicDocument:
     source: dict
 
 
+def superseded_dates(sources: list[dict]) -> dict[str, object]:
+    """Source id -> the filing date of the same company's next filing of the
+    same kind (its 10-K for the next fiscal year), or None for the latest: so
+    on any day the search sees the filing that existed then."""
+    out = {}
+    for s in sources:
+        later = [o["filed"] for o in sources
+                 if o.get("ticker") and o.get("ticker") == s.get("ticker") and o["kind"] == s["kind"]
+                 and o.get("filed") and s.get("filed") and o["filed"] > s["filed"]]
+        out[s["id"]] = min(later) if later else None
+    return out
+
+
 def load_public(sources: list[dict] | None = None) -> list:
     """Every cached source as a corpus document (bank.corpus.CorpusDocument)."""
     from bank.corpus import CorpusDocument, doc_id_for
@@ -244,7 +258,9 @@ def load_public(sources: list[dict] | None = None) -> list:
     from ingestion.parse import parse_markdown
 
     parsed, meta = {}, {}
-    for source in sources or load_sources():
+    sources = sources or load_sources()
+    superseded = superseded_dates(sources)
+    for source in sources:
         path = CACHE / f"{source['id']}.html"
         if not path.exists():
             raise SystemExit(f"{source['id']} isn't fetched: run `python -m bank.public fetch`")
@@ -252,7 +268,7 @@ def load_public(sources: list[dict] | None = None) -> list:
         parsed[file] = parse_markdown(to_markdown(source, path.read_bytes()))
         meta[file] = {"clearance": 0, "doc_type": DOC_TYPES[source["kind"]], "department": "public",
                       "version": str(source.get("version") or ""), "effective_date": source.get("filed"),
-                      "superseded_on": None}
+                      "superseded_on": superseded[source["id"]]}
     original = {f: sum(len(b.text) for b in blocks) for f, blocks in parsed.items()}
     removed = strip_boilerplate(parsed)
     return [CorpusDocument(file, meta[file], chunk_blocks(blocks, file, doc_id_for(file)),

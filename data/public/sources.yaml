@@ -26,6 +26,26 @@ sources:
     document: msft-20260630.htm
     filed: 2026-07-29
     version: FY2026
+  # The 10-Ks in force on the demo's today (2026-06-30): each is superseded
+  # when the same company files its next one (bank.public.superseded_dates).
+  - id: aapl-10k-2025
+    kind: sec_10k
+    title: Apple Inc. Form 10-K, fiscal year ended September 27, 2025
+    ticker: AAPL
+    cik: 320193
+    accession: 0000320193-25-000079
+    document: aapl-20250927.htm
+    filed: 2025-10-31
+    version: FY2025
+  - id: msft-10k-2025
+    kind: sec_10k
+    title: Microsoft Corporation Form 10-K, fiscal year ended June 30, 2025
+    ticker: MSFT
+    cik: 789019
+    accession: 0000950170-25-100235
+    document: msft-20250630.htm
+    filed: 2025-07-30
+    version: FY2025
   - id: ko-10k-2025
     kind: sec_10k
     title: The Coca-Cola Company Form 10-K, fiscal year ended December 31, 2025
