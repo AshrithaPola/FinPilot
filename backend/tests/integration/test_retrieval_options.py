@@ -9,7 +9,7 @@ from ingestion.chunking import chunk_blocks
 from ingestion.parse import parse_markdown
 from db.access import Access
 from ingestion.store import Filters
-from tests.integration.test_corpus_load import ADMIN, _one, _store
+from tests.integration.test_corpus_load import ADMIN, CUSTOMER, _one, _store
 
 FEES = "# Fees\n\n## 1. Overdraft\n\nThe overdraft fee is {fee} per item, at most three a day.\n"
 CARD = """# Card Agreement
@@ -118,3 +118,35 @@ async def test_a_hybrid_search_is_one_round_trip_under_rls(pg_url, app_url):
     assert hits and len(sent) == 1
     other_org = Access(org_id="another-org", clearance=2)  # sees none of this org's documents
     assert await store.scoped(other_org).search(ABROAD, filters=Filters(all_versions=True)) == []
+
+
+MEMO = """# INTERNAL: Card Fraud Rules, Q2 2026
+
+**Memo reference:** FO-2026-03-RULES
+
+## 1. Purpose
+
+This memo sets the thresholds the real-time card fraud engine uses.
+
+## 2. Real-time rules
+
+| Rule | Trigger |
+|---|---|
+| R-101 Velocity | 6 card-not-present purchases within 10 minutes |
+"""
+DISPUTES = "".join(f"## {i}. Part {i}\n\nYou can dispute a charge within 60 days of statement {i}.\n\n"
+                   for i in range(1, 6))
+
+
+async def test_staff_find_the_fraud_memo_by_name_and_customers_never_see_it(pg_url, app_url):
+    store = _store(pg_url, app_url)
+    for doc_id, text, clearance, doc_type in (("memo", MEMO, 2, "internal_memo"),
+                                              ("disputes", f"# Dispute and Error Resolution Policy\n\n{DISPUTES}", 0,
+                                               "policy")):
+        chunks = chunk_blocks(parse_markdown(text), f"{doc_id}.md", doc_id)
+        await store.scoped(ADMIN).add_document(chunks, team_id=None, clearance=clearance, uploaded_by=None,
+                                               meta={"doc_type": doc_type, "effective_date": date(2026, 3, 1)})
+    staff = await store.scoped(ADMIN).search("fraud rules memo", filters=Filters(as_of=date(2026, 6, 30)))
+    assert "memo" in {h.doc_id for h in staff[:3]}  # clearance 2 sees it, and its title is in its chunks
+    customer = await store.scoped(CUSTOMER).search("fraud rules memo", filters=Filters(as_of=date(2026, 6, 30)))
+    assert customer and "memo" not in {h.doc_id for h in customer}

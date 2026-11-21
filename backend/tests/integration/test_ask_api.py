@@ -73,7 +73,8 @@ def test_staff_get_no_customer_data(bank, app_env):
     body = bank.post("/ask", headers=_as("uid-staff"), json={"question": "What's my balance?"}).json()
     [step] = body["plan"]["steps"]
     assert step["status"] == "failed" and "only for signed-in bank customers" in step["error"]
-    assert body["outcome"] == "nothing_found" and body["llm_calls"] == 1  # refused outright: no re-plan
+    assert body["outcome"] == "no_customer_data" and body["llm_calls"] == 1  # refused outright: no re-plan
+    assert body["answer"].startswith("Staff accounts don't have customer data")
 
 
 def test_each_ask_is_traced_and_only_its_orgs_admins_see_it(bank, app_env):

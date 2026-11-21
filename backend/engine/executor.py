@@ -5,8 +5,12 @@ the caller. Plain code, except the documents agent's one retry below.
                   the market tools (public reference data)
   documents       hybrid search over the documents the caller may see; when
                   the evidence is weak (nothing found, a low rerank score,
-                  or no passage holding most of the query's words) it asks
-                  an LLM to rewrite the query and searches once more
+                  or no passage holding most of the query's words) it first
+                  drops a doc_type guess, then asks an LLM to rewrite the
+                  query (keeping the document, company or date the question
+                  names) and searches once more; still weak, or not about
+                  that target, the step fails as not found rather than
+                  answering from another document
   calculation     the calculator, with references to earlier results
                   resolved here ("$s1[0].balance_cents")
 
@@ -36,7 +40,10 @@ _PART = re.compile(r"\[(\d+|\*)\]|\.([a-z_]+)")
 MAX_ROWS_SHOWN = 25  # rows of one tool result shown to the summarizer
 DOC_TYPES = {"fee_schedule", "policy", "agreement", "rate_table", "product_comparison", "api_spec",
              "sec_10k", "fund_prospectus", "consumer_guide", "internal_memo"}
-AS_OF_TODAY = {"get_price", "get_rate"}  # market tools whose missing as_of means "today"
+# Market tools and the argument that dates them: missing means "today", and
+# nothing later than today is ever read (the demo's world ends on DEMO_TODAY).
+AS_OF_TODAY = {"get_price": "as_of", "get_rate": "as_of", "get_company_financials": "as_of",
+               "get_price_history": "end"}
 RERANK_FLOOR = 0.0  # cross-encoder logit; below it the best passage likely doesn't answer
 STOPWORDS = frozenset("the and for with what how does are was were from that this have has about "
                       "which when why can you your my our its into than then them they".split())
@@ -44,6 +51,25 @@ STOPWORDS = frozenset("the and for with what how does are was were from that thi
 
 class StepError(Exception):
     pass
+
+
+class NotFound(StepError):
+    """The documents don't hold what was asked about; another plan won't find it either."""
+
+
+def _words(text: str) -> set[str]:
+    return {t for t in re.findall(r"[a-z0-9]+", text.casefold()) if len(t) > 2 and t not in STOPWORDS}
+
+
+def mentions(target: str, text: str) -> bool:
+    """Does `text` name the target ("fraud rules memo", "Apple 10-K")? Every
+    content word of it appears (as part of a word: "card" in "cardmember")."""
+    words, haystack = _words(target), text.casefold()
+    return all(w in haystack for w in words) if words else True
+
+
+def _haystack(hit) -> str:
+    return f"{hit.filename} {hit.section} {hit.text}"
 
 
 def resolve(value, results: dict):
@@ -75,6 +101,17 @@ def resolve(value, results: dict):
                 raise StepError(f"{value} matches nothing in {match.group(1)}'s result") from None
         current = nxt
     return current if many else current[0]
+
+
+def capped(arguments: dict, key: str, today: date) -> dict:
+    """`arguments` with `key` set to today when it's missing or later; an
+    unreadable date is left for the tool's own validation to refuse."""
+    value = arguments.get(key)
+    try:
+        later = value is None or date.fromisoformat(str(value)) > today
+    except ValueError:
+        return arguments
+    return {**arguments, key: today.isoformat()} if later else arguments
 
 
 def dollars(cents: int) -> str:
@@ -222,7 +259,8 @@ class Executor:
                     results[step.id] = step.result
                 except (StepError, ToolError) as exc:
                     step.status, step.error = "failed", str(exc)
-                    step.retryable = not isinstance(exc, AccessRefused)
+                    step.refused = isinstance(exc, AccessRefused)
+                    step.retryable = not isinstance(exc, (AccessRefused, NotFound))
                 span.update(status=step.status, error=step.error, note=step.note,
                             rows=len(step.result) if isinstance(step.result, list) else None)
             if step.status == "failed":
@@ -237,8 +275,8 @@ class Executor:
             return calculate(step.tool, arguments)
         if step.agent == "documents":
             return await self._search(step, arguments, principal)
-        if step.tool in AS_OF_TODAY and self._today and not arguments.get("as_of"):
-            arguments = {**arguments, "as_of": self._today.isoformat()}
+        if step.tool in AS_OF_TODAY and self._today:
+            arguments = capped(arguments, AS_OF_TODAY[step.tool], self._today)
         tools = self._accounts if step.tool in ACCOUNT_TOOLS else self._market
         with tracing.span("tool", step.tool):
             return tools.call(principal, step.tool, arguments)
@@ -257,13 +295,24 @@ class Executor:
         filters = Filters(doc_type=doc_type, as_of=as_of or self._today)
         store = self._store.scoped(principal)
         hits = await self._traced_search(store, query, filters)
+        if doc_type and weak(query, hits):
+            # A wrong type guess (a memo searched as a "policy") hides the right
+            # document entirely: search every type once, with no model call.
+            filters = Filters(as_of=filters.as_of)
+            hits = await self._traced_search(store, query, filters)
+            step.note = f"weak evidence as {doc_type}; searched every document type"
         if self._rewrite and weak(query, hits):
-            better = await self._rewrite(query, hits)
+            better, target = await self._rewrite(query, hits)
+            if better and target and not mentions(target, better):
+                better = f"{target} {better}"  # the rewrite keeps what the customer asked about
             if better and better.strip().casefold() != query.casefold() and 2 <= len(better) <= 500:
                 again = await self._traced_search(store, better, filters)
-                keep = not weak(better, again)
-                step.note = f"weak evidence; searched again as {better!r}" + ("" if keep else ", no better")
-                hits = again if keep else hits
+                found = not weak(better, again) and (not target or any(mentions(target, _haystack(h)) for h in again))
+                step.note = f"weak evidence; searched again as {better!r}" + ("" if found else ", still not found")
+                if not found:
+                    # Better nothing than an answer from another document.
+                    raise NotFound(f"couldn't find {target or query!r} in the documents")
+                hits = again
         return [{"chunk_id": h.chunk_id, "filename": h.filename, "section": h.section, "text": h.text}
                 for h in hits]
 

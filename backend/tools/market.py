@@ -45,6 +45,7 @@ class FinancialsArgs(Args):
     ticker: Symbol
     metric: Literal[tuple(METRICS)]  # type: ignore[valid-type]
     years: Annotated[int, Field(ge=1, le=10)] = 5
+    as_of: date | None = None  # only figures filed on or before it
 
 
 class RateArgs(Args):
@@ -79,6 +80,7 @@ def _financials(conn, args: FinancialsArgs) -> list[dict]:
     found = rows(conn, """
         SELECT ticker, metric, label, unit, fiscal_year, period_end, value, form, filed, accession
         FROM company_facts WHERE ticker = :ticker AND metric = :metric
+          AND (CAST(:as_of AS date) IS NULL OR filed <= :as_of)
         ORDER BY fiscal_year DESC LIMIT :years
     """, args.model_dump())
     return [{**r, "attribution": f"SEC EDGAR, {r['form']} filed {r['filed']} (accession {r['accession']})"}

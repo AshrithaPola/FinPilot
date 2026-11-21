@@ -311,3 +311,123 @@ def test_a_why_question_must_cite_a_document_passage_when_one_was_found():
     assert code_checks("Why was I charged?", "A fee [1], under the cushion rule [2].", sources, None) == {}
     assert code_checks("What fees did I pay?", "A fee [1].", sources, None) == {}  # not a "why"
     assert code_checks("Why?", "A fee [1].", "[1] Result of list_fees:\n[]", None) == {}  # no passage found
+
+
+def _hit(text, filename, section, rerank, cid):
+    return RetrievedChunk(chunk_id=cid, text=text, filename=filename, page_number=1, score=0.1, dense_rank=1,
+                          sparse_rank=None, similarity=0.5, rerank_score=rerank, section=section)
+
+
+DISPUTE = _hit("You can dispute an unauthorized charge within 60 days.", "dispute-policy.md",
+               "Dispute and Error Resolution Policy > B4. Unauthorized use", 8.05, "d1")
+MEMO = _hit("This memo sets the thresholds the card fraud engine uses.", "internal/fraud-rules-memo.md",
+            "INTERNAL: Card Fraud Rules, Q2 2026 > 1. Purpose", 6.2, "m1")
+
+
+class DisputeOnlyStore:
+    """Like the trace of 2026-11-21: the memo never turns up; the Dispute Policy always does."""
+
+    def __init__(self):
+        self.queries = []
+
+    def scoped(self, principal):
+        return self
+
+    async def search(self, query, filters=None):
+        self.queries.append((query, filters.doc_type))
+        weak_dispute = _hit(DISPUTE.text, DISPUTE.filename, DISPUTE.section, -7.8, "d1")
+        return [DISPUTE] if "Dispute" in query else [weak_dispute]
+
+
+async def test_a_rewrite_keeps_the_named_target_and_says_it_couldnt_find_it(engine, monkeypatch):
+    llm, _ = engine
+    store = DisputeOnlyStore()
+    monkeypatch.setattr(engine_graph, "get_store", lambda: store)
+    llm.plan = {"intent": "memo", "out_of_scope": False, "steps": [
+        _step("s1", "documents", "search", {"query": "fraud rules memo"})]}
+    llm.rewrite, llm.rewrite_target = "Dispute and Error Resolution Policy unauthorized use", "fraud rules memo"
+    result = await engine_graph.answer("What does the fraud rules memo say?", ME)
+    rewritten = store.queries[-1][0]
+    assert rewritten.startswith("fraud rules memo")  # the target was put back into the drifted query
+    [step] = result["plan"]["steps"]
+    assert step["status"] == "failed" and "couldn't find 'fraud rules memo'" in step["error"]
+    assert result["outcome"] == "nothing_found" and result["answer"] == engine_graph.NOTHING_FOUND
+    assert "summarizer" not in result["llm_calls_by_role"]  # nothing answered from the Dispute Policy
+    assert "replanner" not in result["llm_calls_by_role"]  # not found is final
+
+
+class TypedStore:
+    """Finds the memo only when no doc_type narrows the search (a memo isn't a "policy")."""
+
+    def __init__(self):
+        self.types = []
+
+    def scoped(self, principal):
+        return self
+
+    async def search(self, query, filters=None):
+        self.types.append(filters.doc_type)
+        return [MEMO] if filters.doc_type is None else [_hit(DISPUTE.text, DISPUTE.filename, DISPUTE.section,
+                                                              -7.8, "d1")]
+
+
+async def test_a_wrong_doc_type_guess_is_searched_again_across_every_type(engine, monkeypatch):
+    llm, _ = engine
+    store = TypedStore()
+    monkeypatch.setattr(engine_graph, "get_store", lambda: store)
+    llm.plan = {"intent": "memo", "out_of_scope": False, "steps": [
+        _step("s1", "documents", "search", {"query": "fraud rules memo", "doc_type": "policy"})]}
+    llm.answer = "The memo sets the card fraud engine's thresholds [1]."
+    result = await engine_graph.answer("What does the fraud rules memo say?", ME)
+    assert store.types == ["policy", None] and result["outcome"] == "answered"
+    assert "query_rewriter" not in result["llm_calls_by_role"]  # fixed in code, no model call
+    assert result["citations"][0]["filename"] == "internal/fraud-rules-memo.md"
+
+
+def test_the_gatekeeper_fails_an_answer_about_another_document():
+    sources = ('[1] Document dispute-policy.md, section "Dispute and Error Resolution Policy > B4":\n'
+               "You can dispute an unauthorized charge within 60 days.\n\n"
+               '[2] Document internal/fraud-rules-memo.md, section "INTERNAL: Card Fraud Rules > 1. Purpose":\n'
+               "This memo sets the thresholds.\n\nToday is 2026-06-30.\nQuestion: What does the fraud rules memo say?")
+    question = "What does the fraud rules memo say?"
+    planted = "The policy lets you dispute an unauthorized charge within 60 days [1]."  # accurate, wrong document
+    failures = code_checks(question, planted, sources, None)
+    assert "fraud rules memo" in failures["gatekeeper"]
+    assert code_checks(question, "The memo sets the thresholds [2].", sources, None) == {}
+    # Companies too: asked about Apple, answered from Microsoft's filing.
+    msft = '[1] Document public/msft-10k-2025.md, section "Item 1A":\nCompetition is intense.\n\nToday is 2026-06-30.'
+    assert "gatekeeper" in code_checks("What risks does Apple list?", "Competition is intense [1].", msft, None)
+    assert code_checks("What risks does Microsoft list?", "Competition is intense [1].", msft, None) == {}
+    # Generic words in the name ("its last 10-K") don't count as part of it.
+    ko = '[1] Document public/ko-10k-2025.md, section "Item 1A. Risk Factors":\nWater scarcity.\n\nToday is x.'
+    assert code_checks("What did Coca-Cola say about its main risks in its last 10-K?", "Water scarcity [1].",
+                       ko, None) == {}
+
+
+async def test_a_planted_wrong_document_answer_is_rewritten_then_refused(engine, monkeypatch):
+    llm, _ = engine
+    monkeypatch.setattr(engine_graph, "get_store", lambda: DisputeOnlyStore())
+    llm.plan = {"intent": "memo", "out_of_scope": False, "steps": [
+        _step("s1", "documents", "search", {"query": "Dispute and Error Resolution Policy"})]}
+    llm.answer = ["You can dispute an unauthorized charge within 60 days [1].",
+                  "Unauthorized charges can be disputed within 60 days [1]."]
+    result = await engine_graph.answer("What does the fraud rules memo say?", ME)
+    assert [v["gatekeeper"]["passed"] for v in result["validation"]] == [False, False]
+    assert all(v["gatekeeper"]["by"] == "code" for v in result["validation"])
+    assert result["outcome"] == "refused_unverified" and result["citations"] == []
+
+
+async def test_staff_asking_for_account_data_are_told_staff_have_none(engine, monkeypatch):
+    from tools.common import AccessRefused
+
+    class StaffAccounts:
+        def call(self, principal, name, arguments=None):
+            raise AccessRefused("Account tools are only for signed-in bank customers.")
+
+    llm, _ = engine
+    monkeypatch.setattr(engine_graph, "get_accounts_tools", lambda: StaffAccounts())
+    llm.plan = {"intent": "balance", "out_of_scope": False, "steps": [
+        _step("s1", "financial_data", "get_balance", {})]}
+    result = await engine_graph.answer("What's my balance?", ME)
+    assert result["outcome"] == "no_customer_data" and result["llm_calls"] == 1
+    assert result["answer"].startswith("Staff accounts don't have customer data")

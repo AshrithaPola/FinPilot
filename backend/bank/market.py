@@ -42,11 +42,14 @@ SEC_PAUSE, AV_PAUSE = 0.25, 13.0  # SEC allows 10 requests a second; Alpha Vanta
 
 # --- parsing (pure, tested without the network) -----------------------------------
 
-def parse_company_facts(ticker: str, cik: int, facts: dict, years: int = YEARS) -> list[dict]:
+def parse_company_facts(ticker: str, cik: int, facts: dict, years: int = YEARS,
+                        as_of: date | None = None) -> list[dict]:
     """Annual 10-K figures: for each metric, the first concept the company
     reports; one row per fiscal year (the year its period ends), from the
     latest filing that reported it (later 10-Ks repeat earlier years as
-    comparatives). Durations must be about a year, so quarters don't slip in."""
+    comparatives) on or before `as_of` (the demo's today: a filing made after
+    it doesn't exist yet in the demo). Durations must be about a year, so
+    quarters don't slip in."""
     gaap = facts.get("facts", {}).get("us-gaap", {})
     out = []
     for metric, concepts in METRICS.items():
@@ -62,6 +65,8 @@ def parse_company_facts(ticker: str, cik: int, facts: dict, years: int = YEARS) 
                 if "start" in e and not 330 <= (end - date.fromisoformat(e["start"])).days <= 400:
                     continue
                 filed = date.fromisoformat(e["filed"])
+                if as_of and filed > as_of:
+                    continue
                 current = by_year.get(end.year)
                 if current is None or filed > current["filed"]:
                     by_year[end.year] = {"ticker": ticker, "cik": cik, "metric": metric, "concept": concept,
@@ -95,7 +100,7 @@ def _get(session, url: str, **kwargs) -> dict:
     return response.json()
 
 
-def fetch_sec(user_agent: str) -> list[dict]:
+def fetch_sec(user_agent: str, as_of: date | None = None) -> list[dict]:
     import requests
 
     session = requests.Session()
@@ -103,7 +108,7 @@ def fetch_sec(user_agent: str) -> list[dict]:
     rows = []
     for ticker, cik in COMPANIES.items():
         rows += parse_company_facts(ticker, cik, _get(
-            session, f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik:010d}.json"))
+            session, f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik:010d}.json"), as_of=as_of)
         time.sleep(SEC_PAUSE)
     return rows
 
@@ -167,7 +172,10 @@ def main() -> int:
         name = {"sec": "SEC_USER_AGENT", "prices": "ALPHA_VANTAGE_API_KEY", "rates": "FRED_API_KEY"}[args.what]
         print(f"{name} is not set in .env; nothing fetched.", file=sys.stderr)
         return 2
-    rows = {"sec": fetch_sec, "prices": fetch_prices, "rates": fetch_rates}[args.what](key)
+    if args.what == "sec":
+        rows = fetch_sec(key, as_of=settings.demo_today)  # only the filings that exist on the demo's today
+    else:
+        rows = {"prices": fetch_prices, "rates": fetch_rates}[args.what](key)
     print(f"{args.what}: {store(owner, args.what, rows)} rows stored")
     return 0
 

@@ -67,6 +67,28 @@ def test_company_facts_keep_annual_10k_figures_from_the_latest_filing():
         ("revenue", 2024): 105, ("revenue", 2025): 120, ("total_assets", 2025): 900}
     assert found[("revenue", 2024)]["accession"] == "later" and found[("revenue", 2025)]["concept"] == "Revenues"
 
+    # On a day before the later 10-K was filed, only the earlier filing exists.
+    from datetime import date
+
+    before = {(r["metric"], r["fiscal_year"]): r
+              for r in parse_company_facts("KO", 21344, facts, as_of=date(2025, 6, 30))}
+    assert {k: r["value"] for k, r in before.items()} == {("revenue", 2024): 100}
+    assert all(r["filed"] <= date(2025, 6, 30) for r in before.values())
+
+
+def test_market_tools_never_read_past_the_demo_today():
+    from datetime import date
+
+    from engine.executor import AS_OF_TODAY, capped
+
+    today = date(2026, 6, 30)
+    assert capped({"symbol": "VTI"}, "as_of", today) == {"symbol": "VTI", "as_of": "2026-06-30"}
+    assert capped({"as_of": "2026-12-31"}, "as_of", today) == {"as_of": "2026-06-30"}  # later: today
+    assert capped({"as_of": "2026-01-02"}, "as_of", today) == {"as_of": "2026-01-02"}  # earlier: kept
+    assert capped({"end": "soon"}, "end", today) == {"end": "soon"}  # the tool's validation refuses it
+    assert AS_OF_TODAY == {"get_price": "as_of", "get_rate": "as_of", "get_company_financials": "as_of",
+                           "get_price_history": "end"}  # every market tool that reads dated rows
+
 
 def test_price_and_rate_parsers():
     payload = {"Time Series (Daily)": {"2026-11-13": {"4. close": "301.27"}}}

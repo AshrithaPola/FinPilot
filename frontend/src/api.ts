@@ -81,7 +81,7 @@ export interface Verdict {
 // The finished answer: POST /ask's response, and the "done" event of /ask/stream.
 export interface AskResult {
   answer: string;
-  outcome: string; // answered | small_talk | out_of_scope | nothing_found | uncited | refused_unverified
+  outcome: string; // answered | small_talk | money_movement | out_of_scope | nothing_found | no_customer_data | uncited | refused_unverified
   demo_today: string;
   plan: { intent: string; steps: PlanStep[]; dropped: string[] } | null;
   citations: Citation[];

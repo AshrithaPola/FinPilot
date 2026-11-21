@@ -14,7 +14,9 @@ Three validators, judged in ONE structured LLM call (role "validator"):
 Code runs first and needs no LLM: every dollar amount and percentage in the
 answer must match a number in the evidence or the question (rounded to the
 precision the answer gives), there must be at least one citation, a "why"
-question's answer must cite a document passage when one was found, and no
+question's answer must cite a document passage when one was found, a
+document or company the question names must be named by a source the
+answer cites, and no
 advice or money-movement phrasing and no other customer's id may appear. A
 code failure skips the LLM call; the graph regenerates once with the reason,
 then refuses.
@@ -35,12 +37,20 @@ _CUSTOMER = re.compile(r"\bcust-\d{4}\b")
 _CITE = re.compile(r"\[\d+(?:\s*,\s*\d+)*\]")
 _WHY = re.compile(r"\bwhy\b", re.I)
 _DOC_EVIDENCE = re.compile(r"^\[(\d+)\] Document ", re.M)  # how graph._render introduces a passage
+_EVIDENCE_BLOCK = re.compile(r"^\[(\d+)\] (.*?)(?=^\[\d+\] |^Not found:|^Today is |\Z)", re.M | re.S)
+# A document the question names: up to three words before its kind ("the fraud rules memo").
+_NAMED_DOC = re.compile(r"\b((?:[a-z0-9&'-]+\s+){0,3}?(?:memo|policy|agreement|schedule|prospectus|10-k|guide))\b",
+                        re.I)
+_NAME_NOISE = frozenset("the a an my our your its their his her this that these what does say says about of in "
+                        "on bank's bank finpilot last latest recent current new old annual".split())
+COMPANIES = {"apple": "aapl", "microsoft": "msft", "coca-cola": "ko"}  # the 10-K companies, by name and ticker
 
 VALIDATOR_SYSTEM = """You check an answer FinPilot Bank's assistant wrote before the customer sees it.
 Judge it against the question and the evidence only, as three validators:
 - gatekeeper: does it answer the question that was asked? Answering a different question, or only
-  part of it without saying what's missing, fails. Saying plainly that something couldn't be found
-  passes.
+  part of it without saying what's missing, fails. Answering about a different document, company,
+  product or date than the one the question names fails, even if that answer is accurate (asked about
+  a memo, answering from a policy). Saying plainly that something couldn't be found passes.
 - auditor: is every claim, number and date in it stated in the evidence (tool results or document
   passages) it cites? A number that isn't in the evidence, a wrong number or date, or a fact with no
   citation fails. Balances and prices must carry their "as of" date, and if the question asked about
@@ -95,6 +105,37 @@ def ungrounded_amounts(answer: str, sources: str) -> list[str]:
     return bad
 
 
+def named_targets(question: str) -> list[tuple[str, ...]]:
+    """What the question names, each as the words a source naming it would
+    hold (any one alternative): a document ("fraud", "rules", "memo") or a
+    10-K company ("apple" or "aapl")."""
+    targets = []
+    for phrase in _NAMED_DOC.findall(question):
+        words = tuple(w for w in re.findall(r"[a-z0-9-]+", phrase.casefold()) if w not in _NAME_NOISE)
+        if words:
+            targets.append(("all", *words))
+    lowered = question.casefold()
+    for name, ticker in COMPANIES.items():
+        if re.search(rf"\b(?:{re.escape(name)}|{ticker})\b", lowered):
+            targets.append(("any", name, ticker))
+    return targets
+
+
+def wrong_target(question: str, answer: str, sources: str) -> str | None:
+    """The first thing the question names that no evidence the answer cites
+    names (an answer about the Dispute Policy for a question about the fraud
+    memo), or None. Only checked when the answer cites something."""
+    cited = {n for group in _CITE.findall(answer) for n in re.findall(r"\d+", group)}
+    blocks = " ".join(text for n, text in _EVIDENCE_BLOCK.findall(sources) if n in cited).casefold()
+    if not cited:
+        return None
+    for mode, *words in named_targets(question):
+        found = (all if mode == "all" else any)(w.replace("-", "") in blocks.replace("-", "") for w in words)
+        if not found:
+            return " ".join(words) if mode == "all" else words[0]
+    return None
+
+
 def code_checks(question: str, answer: str, sources: str, customer_id: str | None) -> dict:
     """The checks that need no LLM. Returns {validator: reason} for each failure."""
     failures = {}
@@ -105,7 +146,10 @@ def code_checks(question: str, answer: str, sources: str, customer_id: str | Non
         failures["auditor"] = "it cites no evidence"
     passages = set(_DOC_EVIDENCE.findall(sources))
     cited = {n for group in _CITE.findall(answer) for n in re.findall(r"\d+", group)}
-    if _WHY.search(question) and passages and not passages & cited:
+    if (target := wrong_target(question, answer, sources)) is not None:
+        failures["gatekeeper"] = (f"the question asks about the {target}, but no evidence the answer cites is "
+                                  "about it: answer from that, or say it couldn't be found")
+    elif _WHY.search(question) and passages and not passages & cited:
         failures["gatekeeper"] = ("it doesn't say why: explain the rule from the bank's documents that applies "
                                   "(when the fee or decision applies and when it doesn't), citing that passage")
     advice = _ADVICE.search(answer)

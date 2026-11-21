@@ -93,7 +93,9 @@ function FeedbackControl({ queryId }: { queryId: number }) {
 }
 
 // Outcomes that aren't an answer: shown in the refusal style.
-const NOT_ANSWERED = new Set(["out_of_scope", "nothing_found", "uncited", "refused_unverified", "money_movement"]);
+const NOT_ANSWERED = new Set([
+  "out_of_scope", "nothing_found", "uncited", "refused_unverified", "money_movement", "no_customer_data",
+]);
 
 function citationLabel(c: Citation): string {
   if (c.kind === "document") return c.label || `${c.filename.replace(/^public\//, "")} › ${c.section.split(" > ").pop()}`;

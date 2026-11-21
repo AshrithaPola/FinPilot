@@ -1124,6 +1124,30 @@ Three deliberately vague questions on Neon (cust-0036), traced:
     existed then. A customer now sees 19 documents in force (24 loaded:
     minus the two 2025 bank versions, the two FY2026 10-Ks not yet filed,
     and the clearance-2 memo, which staff do see).
+- **Staff walkthrough fixes** (trace of "What does the fraud rules memo
+  say?"):
+  - **Retrieval:** clearance was applied correctly (staff: memo chunks at
+    full-text ranks 1-6; a customer: none), and the memo's chunks carry its
+    title. The planner had passed `doc_type: "policy"` (its type list had no
+    `internal_memo`), which left only policies. Now the list has it, the
+    planner is told to leave the type out unless the question names one,
+    and a weak typed search is searched again across every type, in code.
+  - **Query rewriter:** returns the `target` the question names and must
+    keep it (code puts it back if the rewrite drops it). A retry that's
+    still weak, or whose passages don't name the target, fails the step as
+    not found (no re-plan): "I couldn't find…" instead of an answer from
+    another document.
+  - **Gatekeeper:** a code check fails an answer whose cited evidence
+    doesn't name the document or 10-K company the question names; the
+    model's gatekeeper is told the same.
+  - **Staff asking for account data:** "Staff accounts don't have customer
+    data…" (outcome `no_customer_data`) instead of "couldn't find".
+  - **Market data after DEMO_TODAY:** prices ended on it and FRED holds no
+    rows, but 41 SEC figures were from filings made after it (all of Apple's
+    and Microsoft's FY2024-2026, from the FY2026 10-Ks). The loader now keeps
+    the latest filing on or before DEMO_TODAY (refetched on Neon: 0 rows
+    after it), and the executor caps every market tool's date (as_of, or
+    end for price history) at today.
 - **Not run in a browser here:** this machine runs no Postgres or Docker,
   so the UI was checked with the type checker, lint and build, and the
   stream with the integration tests (`test_ask_flow.py`: event order, the

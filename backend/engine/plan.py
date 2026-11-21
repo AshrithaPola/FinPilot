@@ -34,8 +34,10 @@ public sources (SEC 10-K risk factors and MD&A of AAPL, MSFT, KO; ETF prospectus
 SCHD; CFPB consumer guides).
 - search: {{"query": "words likely to appear in the passage", "doc_type"?: "fee_schedule" |
   "policy" | "agreement" | "rate_table" | "product_comparison" | "api_spec" | "sec_10k" |
-  "fund_prospectus" | "consumer_guide", "as_of"?: "YYYY-MM-DD" (the version in force that day;
-  default today)}}
+  "fund_prospectus" | "consumer_guide" | "internal_memo" (staff memos), "as_of"?: "YYYY-MM-DD"
+  (the version in force that day; default today)}}
+  Leave doc_type out unless the question names that kind of document; a memo is not a policy.
+  When the question names a document, company or date, put that name in the query.
 
 calculation: exact arithmetic. Never do arithmetic yourself: use a calculation step. Its arguments
 may refer to an earlier step's result: "$s1[0].balance_cents" (a field of the first row of step
@@ -103,7 +105,8 @@ class Step:
     purpose: str
     status: str = "planned"  # planned | done | failed
     error: str | None = None
-    retryable: bool = True  # False when the tool refused the caller outright
+    retryable: bool = True  # False when the tool refused the caller outright, or nothing was found
+    refused: bool = False  # the tool refused this caller (staff asking for account data)
     round: int = 1  # 2 for the re-plan's steps
     note: str | None = None  # e.g. the documents agent searched again with a rewritten query
     result: object = None

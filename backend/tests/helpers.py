@@ -44,6 +44,7 @@ class FakeLLM:
         self.plan: dict = {"intent": "", "out_of_scope": True, "steps": []}  # what the planner returns
         self.replan: dict = {"intent": "", "out_of_scope": False, "steps": []}  # what the re-planner returns
         self.rewrite: str = ""  # the documents agent's rewritten query
+        self.rewrite_target: str = ""  # what the question names, which the rewrite must keep
         # The validators' verdict (a list pops one per call); default: all pass.
         self.verdict: dict | list[dict] = {n: {"passed": True, "reason": "ok"}
                                            for n in ("gatekeeper", "auditor", "strategist")}
@@ -65,7 +66,7 @@ class FakeLLM:
         if role == "replanner":
             return dict(self.replan)
         if role == "query_rewriter":
-            return {"query": self.rewrite}
+            return {"query": self.rewrite, "target": self.rewrite_target}
         if role == "validator":
             verdict = self.verdict
             return verdict.pop(0) if isinstance(verdict, list) else verdict
