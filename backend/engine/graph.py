@@ -41,7 +41,8 @@ from engine.checks import VALIDATOR_SCHEMA, VALIDATOR_SYSTEM, VALIDATORS, code_c
 from engine.executor import Executor
 from engine.plan import PLAN_SCHEMA, REPLAN_SYSTEM, Plan, parse_plan, planner_prompt
 from graph.redaction import redact
-from graph.routing import MONEY_MOVEMENT_RESPONSE, SMALL_TALK_RESPONSE, is_money_movement, is_small_talk
+from graph.routing import (MONEY_MOVEMENT_RESPONSE, SMALL_TALK_RESPONSE, asks_for_advice, is_money_movement,
+                           is_small_talk)
 from llm import track_usage
 import observability
 import tracing
@@ -49,6 +50,8 @@ import tracing
 OUT_OF_SCOPE = ("I can help with your FinPilot Bank accounts, the bank's products and policies, "
                 "and the investments and companies in our documents, but not with that.")
 NOTHING_FOUND = "I couldn't find the information to answer that."
+# Added to the context only when graph.routing.asks_for_advice says so (code, not the model).
+ADVICE_ASKED = "The question asks for a recommendation (buy, sell or hold): you can't recommend trades."
 NO_CUSTOMER_DATA = ("Staff accounts don't have customer data, so I can't look up balances, transactions or "
                     "fees. I can answer from the bank's documents and market data.")
 REFUSED = ("I can't give you an answer I could check against your accounts and the bank's documents "
@@ -78,10 +81,11 @@ the answer from the numbered evidence only.
 - A "why" question (why a fee, a charge, a hold, a decision): explain the rule from the bank's
   documents that caused it, with its condition (for a fee, when it applies and when it doesn't), cite
   that passage, and tie it to the customer's own data. Don't just restate the charge.
-- No investment, tax or legal advice. If asked whether to buy, sell or hold something, start with a
-  plain sentence that you can't recommend trades, with no figures and no citation in it. Then offer
-  the relevant facts from the evidence, cited: what the customer holds, the fund's expense ratio, its
-  price as of its date. You can't move money or change accounts: say so if asked.
+- No investment, tax or legal advice: give the facts. Only when the context says the question asks
+  for a recommendation, start with a plain sentence that you can't recommend trades, with no figures
+  and no citation in it, then offer the relevant facts from the evidence, cited: what the customer
+  holds, the fund's expense ratio, its price as of its date. A question about facts gets the facts,
+  with no such sentence. You can't move money or change accounts: say so if asked.
 - If a step failed or evidence is missing, say plainly what you couldn't find.
 - Be brief and direct: two to six sentences, plain words, no headings.
 - Never mention tools, steps, evidence numbers other than as citations, customer ids, cents, or
@@ -247,6 +251,7 @@ def _context(state: EngineState) -> str:
             + ("Not found:\n" + "\n".join(failed) + "\n\n" if failed else "")
             + f"Asked by: {asker(state.get('access'))}. Everything in the evidence was retrieved under this "
               "person's own access (enforced in the database), so all of it may be shared with them.\n"
+            + (f"{ADVICE_ASKED}\n" if asks_for_advice(state["question"]) else "")
             + f"Today is {_today()}.\nQuestion: {state['question']}")
 
 

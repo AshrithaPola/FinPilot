@@ -60,6 +60,26 @@ MONEY_MOVEMENT_RESPONSE = (
 )
 
 
+# A request for a recommendation (buy, sell, hold, "should I…"): only then does
+# the answer open with "I can't recommend trades". A question about facts
+# ("What is VTI's expense ratio?") doesn't.
+_ADVICE_REQUEST = re.compile(
+    r"""\bshould\s+i\b
+      | \b(?:would|do|can|could)\s+you\s+(?:recommend|suggest|advise)\b
+      | \b(?:recommend|advise)\s+(?:me|buying|selling|holding|investing)\b
+      | \bis\s+(?:it|now|this|[A-Z]{2,5})\s+(?:a\s+)?(?:good|smart|wise|bad)\s+(?:idea|time|investment|buy)\b
+      | \b(?:good|smart|bad)\s+(?:investment|buy)\b
+      | \bworth\s+(?:buying|selling|investing|holding)\b
+      | \b(?:buy|sell|hold)\s+or\s+(?:buy|sell|hold)\b
+      | \b(?:buy|sell)\s+(?:more|some|now)\b""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def asks_for_advice(question: str) -> bool:
+    return bool(_ADVICE_REQUEST.search(question))
+
+
 def is_money_movement(question: str) -> bool:
     text = question.strip()
     return bool(_MOVE_REQUEST.match(text) and _MONEY.search(text))

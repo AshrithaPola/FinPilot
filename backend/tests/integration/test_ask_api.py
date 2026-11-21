@@ -119,6 +119,15 @@ def test_the_accounts_summary_shows_only_the_callers_own_accounts(bank, pg_url):
         assert ("cust-0002" if customer == "cust-0001" else "cust-0001") not in json.dumps(body)
     a, b = summaries["cust-0001"], summaries["cust-0002"]
     assert not {t["txn_id"] for t in a["transactions"]} & {t["txn_id"] for t in b["transactions"]}
+    for customer, body in summaries.items():  # the greeting's name is the caller's own
+        owner = sa.create_engine(pg_url)
+        with owner.connect() as conn:
+            full = conn.execute(sa.text("SELECT full_name FROM customers WHERE customer_id = :c"),
+                                {"c": customer}).scalar()
+        owner.dispose()
+        assert body["first_name"] == full.split()[0] and body["first_name"] in synthetic.FIRST
+        # A card payment shows once, as money leaving checking, never as the card's "Payment, thank you".
+        assert all(t["category"] != "payment" for t in body["transactions"])
     assert bank.get("/accounts/summary", headers=_as("uid-staff")).status_code == 404  # staff have no accounts
 
 

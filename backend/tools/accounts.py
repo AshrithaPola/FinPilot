@@ -164,3 +164,12 @@ class AccountsTools:
         tool, args = validate(TOOLS, name, arguments)
         with read_only(self._engine, principal) as conn:
             return tool.run(conn, args)
+
+    def first_name(self, principal) -> str | None:
+        """The signed-in customer's first name, for the UI's greeting (not a
+        planner tool). Same layers: the caller's own row only, under RLS."""
+        if principal is None or not getattr(principal, "customer_id", None):
+            raise AccessRefused("Account tools are only for signed-in bank customers.")
+        with read_only(self._engine, principal) as conn:
+            found = rows(conn, "SELECT full_name FROM customers")
+        return found[0]["full_name"].split()[0] if found else None

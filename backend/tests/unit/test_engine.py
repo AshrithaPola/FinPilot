@@ -473,3 +473,15 @@ def test_the_asker_is_described_without_ids():
     customer = engine_graph.asker(Access(org_id="o", clearance=0, customer_id="cust-0036"))
     assert customer == "a bank customer, about their own accounts (clearance 0)" and "cust-" not in customer
     assert engine_graph.asker(Access(org_id="o", clearance=2, role="admin")).startswith("bank staff (role admin")
+
+
+async def test_only_a_request_for_a_recommendation_gets_the_cant_recommend_line(engine):
+    llm, _ = engine
+    llm.plan = {"intent": "fund", "out_of_scope": False, "steps": [
+        _step("s1", "financial_data", "get_balance", {"account_type": "checking"})]}
+    llm.answer = "Checking has $3,452.02 as of 2026-06-30 [1]."
+    await engine_graph.answer("What is VTI's expense ratio, and what is its latest price?", ME)
+    await engine_graph.answer("Should I buy more VTI?", ME)
+    facts, advice = [c["user"] for c in llm.chat_calls if c["role"] == "summarizer"]
+    assert engine_graph.ADVICE_ASKED not in facts and engine_graph.ADVICE_ASKED in advice
+    assert "Only when the context says the question asks" in llm.chat_calls[1]["system"]

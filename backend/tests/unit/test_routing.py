@@ -1,7 +1,7 @@
 """Query routing classification: small talk vs. real document questions."""
 import pytest
 
-from graph.routing import is_money_movement, is_small_talk
+from graph.routing import asks_for_advice, is_money_movement, is_small_talk
 
 SMALL_TALK = [
     "hi",
@@ -75,3 +75,31 @@ def test_requests_to_move_money_get_the_read_only_reply(question):
 @pytest.mark.parametrize("question", ABOUT_MONEY)
 def test_questions_about_money_are_not_refused(question):
     assert not is_money_movement(question)
+
+
+WANTS_ADVICE = [
+    "Should I buy more VTI?",
+    "Should I sell my BND?",
+    "Would you recommend SCHD for me?",
+    "Is VTI a good investment right now?",
+    "Is it a good time to buy?",
+    "Buy or sell VTI?",
+    "Is SCHD worth buying?",
+]
+WANTS_FACTS = [
+    "What is VTI's expense ratio, and what is its latest price?",
+    "How many VTI shares do I hold?",
+    "What did Coca-Cola say about its main risks in its last 10-K?",
+    "What does the prospectus say about how VTI is managed?",
+    "Can I afford $1,200 this month and stay above $500?",
+]
+
+
+@pytest.mark.parametrize("question", WANTS_ADVICE)
+def test_requests_for_a_recommendation_are_recognised(question):
+    assert asks_for_advice(question)
+
+
+@pytest.mark.parametrize("question", WANTS_FACTS)
+def test_questions_about_facts_are_not_treated_as_advice(question):
+    assert not asks_for_advice(question)

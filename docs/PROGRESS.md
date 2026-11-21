@@ -1203,6 +1203,30 @@ Where they fit, and nothing else moved:
   both 403). A failed export never touches the answer. The masked trace
   in Langfuse can be checked once the key has trace write and read access.
 
+## UI polish (2026-11-21)
+
+- **Customers see answers, not engineering:** latency, model calls,
+  outcome and trace id moved into "How I got this" (its first line:
+  "Answered in 9.5 s with 3 model calls"); the progress chips show only
+  while an answer is being worked on.
+- **Header:** the logo mark (a heading needle in a ring), one demo-date
+  badge, a theme toggle and "Hi, Amara" with an avatar menu (who you
+  are, request traces for admins, sign out). The first name comes from
+  `/accounts/summary` (the caller's own customers row, under RLS).
+- **Accounts:** checking, savings, then the card (amount owed); checking
+  set largest. A card payment shows once, as money leaving checking
+  ("paid from checking"): the card's mirror row ("Payment, thank you")
+  is left out of recent activity. On a phone the accounts fold to one
+  line with the checking balance, so the chat comes first.
+- **Chat:** a plain greeting, suggested questions as cards, wider answer
+  bubbles, a placeholder that names real questions.
+- **Theme:** a light theme (cool paper, slate ink, harbor-teal accent,
+  Public Sans) with a dark toggle, remembered on the device and set
+  before the first paint. Readable at 375 px with no horizontal scroll.
+- **Advice rule:** "I can't recommend trades" opens an answer only when
+  the question asks for a recommendation (`graph.routing.asks_for_advice`,
+  code); a fact question about VTI gets the facts.
+
 ## Phase 10 notes (from 2026-11-14)
 
 - **Reranker and tables.** The cross-encoder demoted table-row chunks

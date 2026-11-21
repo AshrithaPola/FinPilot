@@ -27,3 +27,6 @@ data/public/manual/
 # old eval outputs still on disk
 backend/eval/report.json
 backend/eval/report.md
+
+# Browser automation snapshots (playwright-cli): page text, never committed
+.playwright-cli/

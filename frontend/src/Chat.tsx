@@ -103,14 +103,6 @@ function citationLabel(c: Citation): string {
   return c.attribution ? `${name} (${c.attribution})` : name; // data-source credit stays visible
 }
 
-/** "2026-06-30" as "June 30, 2026", without the browser's time zone moving the day. */
-function longDate(iso: string): string {
-  const [y, m, d] = iso.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-US", {
-    year: "numeric", month: "long", day: "numeric", timeZone: "UTC",
-  });
-}
-
 /** Apply one stream event to the progress list. */
 function track(progress: Progress[], event: AskEvent): Progress[] {
   if (event.type !== "stage" && event.type !== "step") return progress;
@@ -132,22 +124,22 @@ function track(progress: Progress[], event: AskEvent): Progress[] {
 
 interface Props {
   isCustomer: boolean;
-  demoToday?: string;
 }
 
+// Suggested questions, each with the kind of help it shows.
 const CUSTOMER_EXAMPLES = [
-  "Why was I charged $15 on April 6, 2026?",
-  "Can I afford $1,200 this month and stay above $500?",
-  "How much did I spend on groceries in May 2026?",
-  "What is VTI's expense ratio, and what is its latest price?",
+  { topic: "A charge", question: "Why was I charged $15 on April 6, 2026?" },
+  { topic: "Planning", question: "Can I afford $1,200 this month and stay above $500?" },
+  { topic: "Spending", question: "How much did I spend on groceries in May 2026?" },
+  { topic: "Investments", question: "What is VTI's expense ratio, and what is its latest price?" },
 ];
 const STAFF_EXAMPLES = [
-  "How long can the bank hold a check deposit?",
-  "What is the overdraft fee, and when is it charged?",
-  "What did Coca-Cola say about its main risks in its last 10-K?",
+  { topic: "Policy", question: "How long can the bank hold a check deposit?" },
+  { topic: "Fees", question: "What is the overdraft fee, and when is it charged?" },
+  { topic: "Filings", question: "What did Coca-Cola say about its main risks in its last 10-K?" },
 ];
 
-export default function Chat({ isCustomer, demoToday }: Props) {
+export default function Chat({ isCustomer }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
@@ -242,25 +234,20 @@ export default function Chat({ isCustomer, demoToday }: Props) {
 
   return (
     <div className="chat-panel">
-      <h2>Ask FinPilot</h2>
-      <p className="subtitle">
-        {isCustomer ? "Your accounts, the bank's documents and the markets" : "The bank's documents and the markets"}
-        {" "}— planned, cited and checked before you see it.
-        {demoToday && (
-          <span className="demo-date" title="The synthetic data ends on this day, so it's the assistant's today.">
-            {" "}Today is {longDate(demoToday)} (demo date).
-          </span>
-        )}
-      </p>
-
       <div className="message-list">
         {messages.length === 0 && (
           <div className="empty-state">
-            <p>Try one of these, or ask your own:</p>
+            <h1>{isCustomer ? "What would you like to know about your money?" : "What would you like to look up?"}</h1>
+            <p className="empty-lede">
+              {isCustomer
+                ? "Ask about your balances, a charge, your spending or the bank's policies. Every answer shows where it came from."
+                : "Ask about the bank's policies, fees, rates or the funds and filings it covers. Every answer shows where it came from."}
+            </p>
             <div className="examples">
-              {examples.map((q) => (
-                <button key={q} className="example" onClick={() => ask(q)} disabled={isStreaming}>
-                  {q}
+              {examples.map(({ topic, question }) => (
+                <button key={question} className="example" onClick={() => ask(question)} disabled={isStreaming}>
+                  <span className="example-topic">{topic}</span>
+                  <span className="example-question">{question}</span>
                 </button>
               ))}
             </div>
@@ -275,7 +262,8 @@ export default function Chat({ isCustomer, demoToday }: Props) {
               <div className={`bubble${refused ? " refusal" : ""}`}>
                 <span className="role-label">{msg.role === "user" ? "You" : "FinPilot"}</span>
 
-                {msg.role === "assistant" && msg.progress.length > 0 && (
+                {/* Live progress while it works; afterwards the steps live in "How I got this". */}
+                {msg.role === "assistant" && msg.streaming && msg.progress.length > 0 && (
                   <div className="stage-row" aria-live="polite">
                     {msg.progress.map((p) => (
                       <span
@@ -310,7 +298,7 @@ export default function Chat({ isCustomer, demoToday }: Props) {
 
                 {result && result.citations.length > 0 && (
                   <div className="sources">
-                    <span className="sources-label">Sources:</span>
+                    <span className="sources-label">Sources</span>
                     {result.citations.map((c) => (
                       <span key={c.n} className="source-chip" title={c.kind === "document" ? c.snippet : undefined}>
                         [{c.n}] {citationLabel(c)}
@@ -320,17 +308,10 @@ export default function Chat({ isCustomer, demoToday }: Props) {
                 )}
 
                 {result && (
-                  <span className="meta-line">
-                    {refused ? `${result.outcome.replace(/_/g, " ")} · ` : ""}
-                    {((result.timings.total_ms ?? 0) / 1000).toFixed(1)} s · {result.llm_calls} model call
-                    {result.llm_calls === 1 ? "" : "s"}
-                  </span>
-                )}
-
-                {result && (result.plan?.steps.length ?? 0) > 0 && <HowIGotThis result={result} />}
-
-                {result && result.query_id != null && (
-                  <FeedbackControl key={result.query_id} queryId={result.query_id} />
+                  <div className="answer-footer">
+                    {result.query_id != null && <FeedbackControl key={result.query_id} queryId={result.query_id} />}
+                    {(result.plan?.steps.length ?? 0) > 0 && <HowIGotThis result={result} />}
+                  </div>
                 )}
               </div>
             </div>
@@ -342,7 +323,8 @@ export default function Chat({ isCustomer, demoToday }: Props) {
       <div className="input-row">
         <input
           type="text"
-          placeholder={isCustomer ? "Ask about your accounts, fees or investments…" : "Ask about the bank's documents…"}
+          placeholder={isCustomer ? "Ask about a charge, your balance or a bank policy" : "Ask about a policy, a fee or a fund"}
+          aria-label="Your question"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}

@@ -179,8 +179,13 @@ async def accounts_summary(principal: Principal = Depends(get_principal)):
         raise HTTPException(status_code=404, detail="Only customers have accounts.")
     tools = deps.get_accounts_tools()
     balances = await asyncio.to_thread(tools.call, principal, "get_balance", {})
-    recent = await asyncio.to_thread(tools.call, principal, "list_transactions", {"limit": 5})
-    return {"as_of": get_settings().demo_today.isoformat(), "balances": balances, "transactions": recent}
+    recent = await asyncio.to_thread(tools.call, principal, "list_transactions", {"limit": 20})
+    # A card payment is two rows: money leaving checking, and "Payment, thank you"
+    # arriving on the card. Show it once, as the money leaving checking.
+    recent = [t for t in recent if t.get("category") != "payment"][:5]
+    first_name = await asyncio.to_thread(tools.first_name, principal)
+    return {"as_of": get_settings().demo_today.isoformat(), "first_name": first_name, "balances": balances,
+            "transactions": recent}
 
 
 def _engine_error(failure: AskFailed, diagnostics: bool) -> JSONResponse:

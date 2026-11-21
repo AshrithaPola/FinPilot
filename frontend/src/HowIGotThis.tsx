@@ -104,6 +104,11 @@ export default function HowIGotThis({ result }: { result: AskResult }) {
   return (
     <details className="hig">
       <summary>How I got this</summary>
+      <p className="hig-overview">
+        Answered in {seconds(result.timings.total_ms)} with {result.llm_calls} model call
+        {result.llm_calls === 1 ? "" : "s"}
+        {result.outcome !== "answered" ? `; result: ${result.outcome.replace(/_/g, " ")}` : ""}.
+      </p>
 
       {steps.length > 0 && (
         <section>

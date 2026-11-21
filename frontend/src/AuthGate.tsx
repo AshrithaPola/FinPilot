@@ -6,6 +6,7 @@ import {
   type User,
 } from "firebase/auth";
 import { auth } from "./firebase";
+import LogoMark from "./Logo";
 import { apiFetch, setForbiddenHandler, type Me } from "./api";
 
 // What each /me reason means for the person looking at the screen.
@@ -156,6 +157,10 @@ function Screen({ title, children, onSignOut, email }: {
   return (
     <div className="auth-screen">
       <div className="auth-card">
+        <div className="brand auth-brand">
+          <LogoMark />
+          <span className="brand-name">FinPilot</span>
+        </div>
         <h1>{title}</h1>
         {children}
         {onSignOut && (

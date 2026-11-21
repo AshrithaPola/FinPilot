@@ -49,8 +49,12 @@ export interface DocumentInfo {
 // A customer's sidebar: balances and the latest transactions (GET /accounts/summary).
 export interface AccountsSummary {
   as_of: string;
+  first_name: string | null; // for the greeting
   balances: { account_id: string; type: string; product: string; balance_cents: number; as_of: string | null }[];
-  transactions: { txn_id: string; posted_on: string; amount_cents: number; merchant: string | null; description: string | null }[];
+  transactions: {
+    txn_id: string; account_id: string; posted_on: string; amount_cents: number;
+    merchant: string | null; description: string | null; category: string | null;
+  }[];
 }
 
 // One piece of evidence an answer cites: a document passage or a tool result.
