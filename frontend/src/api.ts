@@ -46,10 +46,18 @@ export interface DocumentInfo {
   clearance?: number;
 }
 
+// A customer's sidebar: balances and the latest transactions (GET /accounts/summary).
+export interface AccountsSummary {
+  as_of: string;
+  balances: { account_id: string; type: string; product: string; balance_cents: number; as_of: string | null }[];
+  transactions: { txn_id: string; posted_on: string; amount_cents: number; merchant: string | null; description: string | null }[];
+}
+
 // One piece of evidence an answer cites: a document passage or a tool result.
+// `label` is the source as a person reads it ("Your fees on Apr 6, 2026").
 export type Citation =
-  | { n: number; kind: "document"; step: string; chunk_id: string; filename: string; section: string; snippet: string }
-  | { n: number; kind: "tool"; step: string; tool: string; attribution: string | null };
+  | { n: number; kind: "document"; step: string; chunk_id: string; filename: string; section: string; snippet: string; label?: string | null }
+  | { n: number; kind: "tool"; step: string; tool: string; attribution: string | null; label?: string | null };
 
 export interface PlanStep {
   id: string;

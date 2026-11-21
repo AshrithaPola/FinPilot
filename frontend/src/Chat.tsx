@@ -93,11 +93,12 @@ function FeedbackControl({ queryId }: { queryId: number }) {
 }
 
 // Outcomes that aren't an answer: shown in the refusal style.
-const NOT_ANSWERED = new Set(["out_of_scope", "nothing_found", "uncited", "refused_unverified"]);
+const NOT_ANSWERED = new Set(["out_of_scope", "nothing_found", "uncited", "refused_unverified", "money_movement"]);
 
 function citationLabel(c: Citation): string {
-  if (c.kind === "document") return `${c.filename.replace(/^public\//, "")} › ${c.section.split(" > ").pop()}`;
-  return c.attribution ? `${c.tool} (${c.attribution})` : c.tool;
+  if (c.kind === "document") return c.label || `${c.filename.replace(/^public\//, "")} › ${c.section.split(" > ").pop()}`;
+  const name = c.label || c.tool;
+  return c.attribution ? `${name} (${c.attribution})` : name; // data-source credit stays visible
 }
 
 /** "2026-06-30" as "June 30, 2026", without the browser's time zone moving the day. */

@@ -1034,7 +1034,8 @@ Three deliberately vague questions on Neon (cust-0036), traced:
 | # | Commit | What |
 |---|---|---|
 | 1 | 0c8a244 | `/ask/stream` (live stages and steps), the chat on `/ask`, the old `/query` pipeline deleted, friendly retryable errors |
-| 2 | this commit | The "How I got this" panel under each answer |
+| 2 | 9d371a6 | The "How I got this" panel under each answer |
+| 3 | this commit | Walkthrough fixes: accounts sidebar, in-force documents only, readable sources, "why" explains the rule, plain advice and money-movement refusals |
 
 ### Notes
 
@@ -1093,6 +1094,27 @@ Three deliberately vague questions on Neon (cust-0036), traced:
     trace id (for an admin's `/admin/traces/{id}`).
 
   Everything comes from the `/ask` result: no extra request.
+- **Walkthrough fixes** (commit 3, from a signed-in run as cust-0036):
+  - **Accounts sidebar:** `GET /accounts/summary` (customers only, 404 for
+    staff) returns checking, savings and card balances and the five latest
+    transactions, through the same read-only, RLS-bound tools the engine
+    uses, as of the demo date. The document list folds up below it.
+  - **Documents in force only:** `/documents` lists the versions in force
+    on the demo's today (`list_documents(as_of=...)`, the same rule as
+    search), so the 2025 fee schedule and overdraft policy no longer show.
+  - **Readable sources:** every evidence item carries a `label` built in
+    code from the step's arguments and rows ("Your fees on Apr 6, 2026",
+    "Checking balance as of Jun 30, 2026", "Fee Schedule 2026 › 1. Everyday
+    Checking"); the chat shows it instead of the tool name.
+  - **"Why" explains the rule:** the summarizer is told to give the
+    document's rule and its condition, and a code check sends back a "why"
+    answer that cites no passage when one was found (regenerated once with
+    the reason).
+  - **Advice:** the planner gathers holdings, price and expense ratio; the
+    answer opens with a plain "can't recommend trades" sentence, with no
+    figure or citation in it, then gives the facts.
+  - **Moving money** is a code route (`graph/routing.py is_money_movement`,
+    no LLM call): "FinPilot is read-only and can't move money…".
 - **Not run in a browser here:** this machine runs no Postgres or Docker,
   so the UI was checked with the type checker, lint and build, and the
   stream with the integration tests (`test_ask_flow.py`: event order, the

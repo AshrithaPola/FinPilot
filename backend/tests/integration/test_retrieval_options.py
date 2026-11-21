@@ -57,6 +57,9 @@ async def test_filters_default_to_the_version_in_force_today(pg_url, app_url):
     assert {"f25", "f26"} <= await _docs(store, "overdraft fee", all_versions=True)
     assert await _docs(store, "fee", department="card_services") == {"card"}
     assert await _docs(store, "fee", doc_type="fee_schedule", all_versions=True) == {"f25", "f26"}
+    # The documents list (the UI's sidebar) uses the same rule.
+    listed = lambda day: {d["doc_id"] for d in store.scoped(ADMIN).list_documents(as_of=day)}  # noqa: E731
+    assert listed(date(2026, 6, 30)) == {"f26", "card"} and listed(date(2025, 6, 1)) == {"f25", "card"}
 
 
 async def test_the_question_leg_finds_a_chunk_by_its_hypothetical_question(pg_url, app_url):

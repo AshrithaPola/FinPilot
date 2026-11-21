@@ -40,3 +40,26 @@ SMALL_TALK_RESPONSE = (
 
 def is_small_talk(question: str) -> bool:
     return bool(_SMALL_TALK.match(question.strip()))
+
+
+# A request to move money: the message opens with the request ("transfer",
+# "can you send", "I want to pay") AND names money. Same asymmetry as above:
+# "how much did I transfer in May?" and "send me my statement" stay questions.
+_MOVE_REQUEST = re.compile(
+    r"""^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+(?:want|need|would\s+like|'d\s+like)
+         \s+(?:you\s+)?to\s+|help\s+me\s+|go\s+ahead\s+and\s+)?
+        (?:transfer|move|send|pay|wire|withdraw|deposit|zelle)\b""",
+    re.IGNORECASE | re.VERBOSE,
+)
+_MONEY = re.compile(r"\$\s?\d|\b(?:money|funds|dollars|bill|rent)\b|\b(?:to|from|into)\s+(?:my|the)\s+"
+                    r"(?:savings|checking|card|credit\s+card|account)\b", re.IGNORECASE)
+
+MONEY_MOVEMENT_RESPONSE = (
+    "FinPilot is read-only and can't move money: no transfers, payments or withdrawals. "
+    "I can tell you your balances, transactions and fees, and explain the bank's policies."
+)
+
+
+def is_money_movement(question: str) -> bool:
+    text = question.strip()
+    return bool(_MOVE_REQUEST.match(text) and _MONEY.search(text))

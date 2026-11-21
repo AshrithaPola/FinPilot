@@ -4,7 +4,8 @@ Endpoints:
     POST /ask           — the reasoning engine: plan, agents, one checked and cited answer
     POST /ask/stream    — the same over SSE: the plan, each stage and step as it runs,
                           then the answer (sent only after the validators pass it)
-    GET  /documents     — documents the caller can see, newest first
+    GET  /documents     — documents the caller can see (versions in force), newest first
+    GET  /accounts/summary — a customer's balances and latest transactions
     POST /feedback      — thumbs up/down on an answer (its query_id)
     GET  /admin/traces  — recent /ask traces of the admin's org; /admin/traces/{id} one
     GET  /admin/logs    — recent query logs of the admin's org (admins only)
@@ -163,8 +164,21 @@ async def _run_ask(question: str, principal: Principal, listener=None) -> dict:
 
 @app.get("/documents")
 async def list_documents(principal: Principal = Depends(get_principal)):
-    """Documents the caller can see, newest first."""
-    return {"documents": get_store().scoped(principal).list_documents()}
+    """Documents the caller can see, newest first: the versions in force on the demo's today."""
+    return {"documents": get_store().scoped(principal).list_documents(as_of=get_settings().demo_today)}
+
+
+@app.get("/accounts/summary")
+async def accounts_summary(principal: Principal = Depends(get_principal)):
+    """The signed-in customer's balances and five latest transactions, as of
+    the demo's today, through the same read-only, RLS-bound tools the engine
+    uses. 404 for staff: they have no accounts."""
+    if not getattr(principal, "customer_id", None):
+        raise HTTPException(status_code=404, detail="Only customers have accounts.")
+    tools = deps.get_accounts_tools()
+    balances = await asyncio.to_thread(tools.call, principal, "get_balance", {})
+    recent = await asyncio.to_thread(tools.call, principal, "list_transactions", {"limit": 5})
+    return {"as_of": get_settings().demo_today.isoformat(), "balances": balances, "transactions": recent}
 
 
 def _engine_error(failure: AskFailed, diagnostics: bool) -> JSONResponse:

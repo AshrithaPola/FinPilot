@@ -1,7 +1,7 @@
 """Query routing classification: small talk vs. real document questions."""
 import pytest
 
-from graph.routing import is_small_talk
+from graph.routing import is_money_movement, is_small_talk
 
 SMALL_TALK = [
     "hi",
@@ -49,3 +49,29 @@ def test_document_questions_pass_through(question):
     # False positives are the costly error here — a real question must never
     # be answered with the canned small-talk response.
     assert not is_small_talk(question)
+
+
+MOVE_MONEY = [
+    "Transfer $500 to my savings",
+    "Can you send $40 to my credit card?",
+    "please pay my rent",
+    "I want to move money from my checking to my savings",
+    "Could you wire $2,000 to my brother?",
+]
+ABOUT_MONEY = [
+    "How much did I transfer in May 2026?",  # a question about past transfers
+    "send me my statement",  # a request, but not to move money
+    "Why was I charged $15 on April 6, 2026?",
+    "Can I afford $1,200 this month and stay above $500?",
+    "pay attention to the overdraft policy: what does it say?",
+]
+
+
+@pytest.mark.parametrize("question", MOVE_MONEY)
+def test_requests_to_move_money_get_the_read_only_reply(question):
+    assert is_money_movement(question)
+
+
+@pytest.mark.parametrize("question", ABOUT_MONEY)
+def test_questions_about_money_are_not_refused(question):
+    assert not is_money_movement(question)

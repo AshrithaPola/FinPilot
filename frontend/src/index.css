@@ -533,3 +533,26 @@ body {
 .trace-table tr.clickable:hover { background: rgba(99, 102, 241, 0.08); }
 .trace-table tr.kind-node td:nth-child(4) { font-weight: 600; }
 .trace-table tr.kind-llm td:nth-child(3) { color: var(--accent-hover); }
+
+/* ── Accounts summary (customers' sidebar) ───────────────────── */
+.accounts { display: flex; flex-direction: column; gap: 8px; }
+.accounts h3 {
+  margin: 8px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+}
+.balances { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.balance-row { display: flex; justify-content: space-between; font-size: 14px; }
+.balance-row dt { color: var(--muted); }
+.balance-row dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+.negative { color: var(--error); }
+.positive { color: var(--success); }
+.txn-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.txn-list li { display: flex; justify-content: space-between; gap: 8px; font-variant-numeric: tabular-nums; }
+.txn-what { display: flex; flex-direction: column; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.txn-date { font-size: 11px; color: var(--muted); }
+.doc-section summary { cursor: pointer; font-size: 14px; font-weight: 600; padding: 4px 0; }
+.doc-section[open] summary { margin-bottom: 8px; }

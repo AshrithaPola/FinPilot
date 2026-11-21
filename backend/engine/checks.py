@@ -13,7 +13,8 @@ Three validators, judged in ONE structured LLM call (role "validator"):
 
 Code runs first and needs no LLM: every dollar amount and percentage in the
 answer must match a number in the evidence or the question (rounded to the
-precision the answer gives), there must be at least one citation, and no
+precision the answer gives), there must be at least one citation, a "why"
+question's answer must cite a document passage when one was found, and no
 advice or money-movement phrasing and no other customer's id may appear. A
 code failure skips the LLM call; the graph regenerates once with the reason,
 then refuses.
@@ -32,6 +33,8 @@ _ADVICE = re.compile(
     r"|\bI(?:'ve| have) (?:transferred|moved|paid|sent|scheduled)\b", re.I)
 _CUSTOMER = re.compile(r"\bcust-\d{4}\b")
 _CITE = re.compile(r"\[\d+(?:\s*,\s*\d+)*\]")
+_WHY = re.compile(r"\bwhy\b", re.I)
+_DOC_EVIDENCE = re.compile(r"^\[(\d+)\] Document ", re.M)  # how graph._render introduces a passage
 
 VALIDATOR_SYSTEM = """You check an answer FinPilot Bank's assistant wrote before the customer sees it.
 Judge it against the question and the evidence only, as three validators:
@@ -100,6 +103,11 @@ def code_checks(question: str, answer: str, sources: str, customer_id: str | Non
         failures["auditor"] = f"these figures aren't in the evidence: {', '.join(bad)}"
     elif not _CITE.search(answer):
         failures["auditor"] = "it cites no evidence"
+    passages = set(_DOC_EVIDENCE.findall(sources))
+    cited = {n for group in _CITE.findall(answer) for n in re.findall(r"\d+", group)}
+    if _WHY.search(question) and passages and not passages & cited:
+        failures["gatekeeper"] = ("it doesn't say why: explain the rule from the bank's documents that applies "
+                                  "(when the fee or decision applies and when it doesn't), citing that passage")
     advice = _ADVICE.search(answer)
     others = {c for c in _CUSTOMER.findall(answer) if c != customer_id}
     if advice:

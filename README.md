@@ -154,7 +154,8 @@ CI (`.github/workflows/tests.yml`) runs on every push against a `pgvector/pgvect
 | Endpoint | Purpose |
 |---|---|
 | `POST /ask` | The reasoning engine: `{question}` → the answer, its plan and steps, citations, the validators' verdicts, `demo_today`, the stage `timeline`, LLM calls and `trace_id` |
-| `GET /documents` | Documents the caller can see, newest first |
+| `GET /documents` | Documents the caller can see, in the version in force on the demo date, newest first |
+| `GET /accounts/summary` | A customer's balances and five latest transactions, as of the demo date (404 for staff) |
 | `POST /ask/stream` | `/ask` over server-sent events, for the chat: the plan, each stage and step as it starts and ends, then the answer once the validators passed it (`done`), or a friendly `error` with whether retrying can help |
 | `POST /feedback` | `{query_id, thumbs_up, comment?}`: upserts the verdict on an answer (`/ask` returns its `query_id`) |
 | `GET /admin/traces`, `GET /admin/traces/{id}` | Recent `/ask` traces of the admin's org (latency, LLM calls, estimated cost, outcome), and one with every span |

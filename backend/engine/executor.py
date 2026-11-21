@@ -133,6 +133,71 @@ def weak(query: str, hits) -> bool:
     return max(sum(t in h.text.casefold() for t in terms) for h in hits) < len(terms) / 2
 
 
+def _day(iso) -> str | None:
+    """"2026-04-06" as "Apr 6, 2026"; None if it isn't a date."""
+    try:
+        d = date.fromisoformat(str(iso))
+    except ValueError:
+        return None
+    return f"{d:%b} {d.day}, {d.year}"
+
+
+def _period(args: dict) -> str:
+    start, end = _day(args.get("start")), _day(args.get("end"))
+    if start and start == end:
+        return f" on {start}"
+    if start and end:
+        return f", {start} to {end}"
+    return f" from {start}" if start else f" through {end}" if end else ""
+
+
+_DOC_WORDS = {"10k": "10-K", "api": "API", "aapl": "AAPL", "msft": "MSFT", "ko": "KO", "vti": "VTI",
+              "bnd": "BND", "schd": "SCHD", "cfpb": "CFPB", "etf": "ETF"}
+_CALCULATIONS = {"afford": "Affordability", "total": "Total", "interest": "Interest",
+                 "percent_change": "Percent change", "market_value": "Market value", "gain": "Gain"}
+
+
+def doc_label(filename: str, section: str) -> str:
+    """"public/fee-schedule-2026.md", "Fees > 1. Overdraft" as "Fee Schedule 2026 › 1. Overdraft"."""
+    stem = filename.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+    title = " ".join(_DOC_WORDS.get(w.casefold(), w.capitalize()) for w in re.split(r"[-_\s]+", stem) if w)
+    part = (section or "").split(" > ")[-1].strip()
+    return f"{title} › {part}" if part else title
+
+
+def source_label(step: Step, rows: list) -> str:
+    """What a customer reads as the source of a tool result: "Your fees on
+    Apr 6, 2026", "Checking balance as of Jun 30, 2026". Dates come from the
+    step's arguments or the rows themselves, never from the model's text."""
+    args = step.arguments if isinstance(step.arguments, dict) else {}
+    first = rows[0] if rows and isinstance(rows[0], dict) else {}
+    tool = step.tool
+    if step.agent == "calculation":
+        return f"{_CALCULATIONS.get(tool, tool.replace('_', ' ').capitalize())} (calculated)"
+    if tool == "get_balance":
+        kind = args.get("account_type") or (first.get("type") if len(rows) == 1 else None)
+        dates = [r["as_of"] for r in rows if isinstance(r, dict) and r.get("as_of")]
+        as_of = _day(max(dates)) if dates else None
+        return (f"{kind.capitalize()} balance" if kind else "Your balances") + (f" as of {as_of}" if as_of else "")
+    if tool == "list_fees":
+        return "Your fees" + _period(args)
+    if tool == "list_transactions":
+        category = str(args.get("category") or "").replace("_", " ")
+        return f"Your {category + ' ' if category else ''}transactions" + _period(args)
+    if tool == "get_price":
+        day = _day(first.get("price_date"))
+        return f"{first.get('symbol') or args.get('symbol', '')} price" + (f" as of {day}" if day else "")
+    if tool == "get_price_history":
+        return f"{args.get('symbol', '')} price history" + _period(args)
+    if tool == "get_company_financials":
+        return f"{first.get('ticker') or args.get('ticker', '')} 10-K: {first.get('label') or args.get('metric', '')}"
+    if tool == "get_rate":
+        day = _day(first.get("obs_date"))
+        return f"{first.get('title') or args.get('series_id', '')}" + (f" as of {day}" if day else "")
+    return {"list_accounts": "Your accounts", "list_cards": "Your cards",
+            "list_holdings": "Your holdings"}.get(tool, tool.replace("_", " ").capitalize())
+
+
 class Executor:
     """`rewrite(query, hits) -> str | None` is the documents agent's LLM
     (one call per weak search); `today` the date a missing as_of means."""
@@ -215,12 +280,14 @@ class Executor:
     def _evidence(step: Step) -> list[dict]:
         if step.agent == "documents":
             return [{"kind": "document", "step": step.id, "chunk_id": h["chunk_id"], "filename": h["filename"],
-                     "section": h["section"], "text": h["text"]} for h in step.result]
+                     "section": h["section"], "text": h["text"], "label": doc_label(h["filename"], h["section"])}
+                    for h in step.result]
         rows = step.result if isinstance(step.result, list) else [step.result]
+        label = source_label(step, rows)
         if not rows:
-            return [{"kind": "tool", "step": step.id, "tool": step.tool, "data": "no rows"}]
+            return [{"kind": "tool", "step": step.id, "tool": step.tool, "data": "no rows", "label": label}]
         attribution = next((r.get("attribution") for r in rows if isinstance(r, dict) and r.get("attribution")), None)
         shown = presentable(rows[:MAX_ROWS_SHOWN])
         note = f" (first {MAX_ROWS_SHOWN} of {len(rows)} rows)" if len(rows) > MAX_ROWS_SHOWN else ""
         return [{"kind": "tool", "step": step.id, "tool": step.tool, "attribution": attribution,
-                 "data": shown, "note": note}]
+                 "data": shown, "note": note, "label": label}]

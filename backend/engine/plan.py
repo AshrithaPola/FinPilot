@@ -53,6 +53,9 @@ How to plan common questions:
   dates (limit 200), then calculation total of "$s1[*].amount_cents".
 - Companies and funds: market tools for the numbers, a documents search for what the filing or
   prospectus says.
+- Advice ("should I buy more VTI?"): not out of scope. The answer won't advise, but plan the facts
+  it can offer: list_holdings, get_price for the symbol, and a documents search for the fund's
+  expense ratio (doc_type "fund_prospectus").
 
 Today is {today}: "today", "now", "this month" and "this year" mean relative to that date.
 Customer data (accounts, transactions, fees) runs from {data_from} to {data_through}. If the question

@@ -258,3 +258,56 @@ def test_figures_are_checked_against_the_evidence_and_the_question():
     assert code_checks("q", "about 3 days [1]", "", "cust-0036") == {}  # counts and days aren't money
     assert code_checks("q", "cust-0002 has $0 [1]", "$0", "cust-0036") == {"strategist": "it mentions another customer"}
     assert code_checks("q", "Yes.", "", None) == {"auditor": "it cites no evidence"}
+
+
+async def test_a_why_answer_without_the_policy_is_rewritten_to_explain_the_rule(engine, monkeypatch):
+    llm, _ = engine
+    monkeypatch.setattr(engine_graph, "get_store", lambda: FakeStore())
+    llm.plan = {"intent": "explain a fee", "out_of_scope": False, "steps": [
+        _step("s1", "financial_data", "list_fees", {"start": "2026-04-06", "end": "2026-04-06"}),
+        _step("s2", "documents", "search", {"query": "overdraft fee cushion per item"})]}
+    restated = "You were charged a $15 overdraft fee on April 6, 2026 [1]."
+    explained = ("You were charged $15 on April 6, 2026 [1] because the payment overdrew your account by more "
+                 "than the $50.00 cushion; at $50.00 or less there's no fee [2].")
+    llm.answer = [restated, explained]
+    result = await engine_graph.answer("Why was I charged $15 on April 6, 2026?", ME)
+    first, second = result["validation"]
+    assert not first["gatekeeper"]["passed"] and first["gatekeeper"]["by"] == "code"
+    summarizer = [c for c in llm.chat_calls if c["role"] == "summarizer"]
+    assert "rule from the bank's documents" in summarizer[1]["user"]  # the reason went back to the summarizer
+    assert all(v["passed"] for v in second.values()) and result["answer"] == explained
+    assert '"why" question' in summarizer[0]["system"]  # the summarizer is told how to answer "why"
+    assert [c["label"] for c in result["citations"]] == ["Your fees on Apr 6, 2026", "Fees › Fees"]
+
+
+async def test_a_request_to_move_money_gets_the_read_only_reply_without_a_model_call(engine):
+    result = await engine_graph.answer("Transfer $500 to my savings", ME)
+    assert result["outcome"] == "money_movement" and result["llm_calls"] == 0
+    assert result["answer"].startswith("FinPilot is read-only and can't move money")
+
+
+def test_sources_are_labelled_for_people_not_by_tool_name():
+    from engine.executor import doc_label, source_label
+    from engine.plan import Step
+
+    balance = [{"type": "checking", "as_of": "2026-06-30", "balance_cents": 1}]
+    assert source_label(Step("s1", "financial_data", "get_balance", {"account_type": "checking"}, ""),
+                        balance) == "Checking balance as of Jun 30, 2026"
+    assert source_label(Step("s1", "financial_data", "list_transactions",
+                             {"category": "groceries", "start": "2026-05-01", "end": "2026-05-31"}, ""),
+                        []) == "Your groceries transactions, May 1, 2026 to May 31, 2026"
+    assert source_label(Step("s1", "financial_data", "get_price", {"symbol": "VTI"}, ""),
+                        [{"symbol": "VTI", "price_date": "2026-06-30"}]) == "VTI price as of Jun 30, 2026"
+    assert source_label(Step("s2", "calculation", "afford", {}, ""), [{}]) == "Affordability (calculated)"
+    assert source_label(Step("s1", "financial_data", "list_fees", {"start": "not a date"}, ""), []) == "Your fees"
+    assert doc_label("public/fee-schedule-2026.md", "Fees > 1. Everyday Checking") == \
+        "Fee Schedule 2026 › 1. Everyday Checking"
+    assert doc_label("public/vti-prospectus.md", "") == "VTI Prospectus"
+
+
+def test_a_why_question_must_cite_a_document_passage_when_one_was_found():
+    sources = '[1] Result of list_fees:\n[]\n\n[2] Document fees.md, section "Fees":\nNo fee at $50.00 or less.'
+    assert "gatekeeper" in code_checks("Why was I charged?", "A fee [1].", sources, None)
+    assert code_checks("Why was I charged?", "A fee [1], under the cushion rule [2].", sources, None) == {}
+    assert code_checks("What fees did I pay?", "A fee [1].", sources, None) == {}  # not a "why"
+    assert code_checks("Why?", "A fee [1].", "[1] Result of list_fees:\n[]", None) == {}  # no passage found

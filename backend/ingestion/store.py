@@ -392,16 +392,20 @@ class HybridStore:
         with self._begin() as conn:
             return conn.execute(sa.text("SELECT count(*) FROM chunks")).scalar()
 
-    def list_documents(self) -> list[dict]:
+    def list_documents(self, as_of: date | None = None) -> list[dict]:
         """Documents the caller can see (the documents table, under RLS),
-        newest first."""
+        newest first; with `as_of`, only the versions in force that day (the
+        same rule as search's Filters)."""
         with self._begin() as conn:
             rows = conn.execute(sa.text("""
                 SELECT d.doc_id, d.filename, d.uploaded_at, d.team_id, d.clearance,
                        count(c.chunk_id) AS chunks
                 FROM documents d LEFT JOIN chunks c ON c.doc_id = d.doc_id
+                WHERE CAST(:as_of AS date) IS NULL
+                   OR (coalesce(d.effective_date <= CAST(:as_of AS date), true)
+                       AND coalesce(d.superseded_on > CAST(:as_of AS date), true))
                 GROUP BY d.doc_id ORDER BY d.uploaded_at DESC, d.doc_id
-            """)).mappings().all()
+            """), {"as_of": as_of}).mappings().all()
         return [
             {"doc_id": r["doc_id"], "filename": r["filename"],
              "uploaded_at": r["uploaded_at"].isoformat(), "chunks": r["chunks"],

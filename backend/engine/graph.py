@@ -2,7 +2,7 @@
 
     validate ──(rejected)──> END
        │
-     route ──(small talk)──> END                            (code, no LLM)
+     route ──(small talk, moving money)──> END              (code, no LLM)
        │
      plan                                                   (LLM: the planner)
        │
@@ -41,7 +41,7 @@ from engine.checks import VALIDATOR_SCHEMA, VALIDATOR_SYSTEM, VALIDATORS, code_c
 from engine.executor import Executor
 from engine.plan import PLAN_SCHEMA, REPLAN_SYSTEM, Plan, parse_plan, planner_prompt
 from graph.redaction import redact
-from graph.routing import SMALL_TALK_RESPONSE, is_small_talk
+from graph.routing import MONEY_MOVEMENT_RESPONSE, SMALL_TALK_RESPONSE, is_money_movement, is_small_talk
 from llm import track_usage
 import tracing
 
@@ -66,8 +66,13 @@ the bank's documents and markets. Write the answer from the numbered evidence on
   period than the evidence covers (say, a balance "today" when it's as of an earlier day), say which
   date the figures are for. Never present figures for one date as another's.
 - Say when a price is a synthetic demo price.
-- No investment, tax or legal advice: give the facts, and if asked what to buy or sell, say you
-  can't advise on that. You can't move money or change accounts: say so if asked.
+- A "why" question (why a fee, a charge, a hold, a decision): explain the rule from the bank's
+  documents that caused it, with its condition (for a fee, when it applies and when it doesn't), cite
+  that passage, and tie it to the customer's own data. Don't just restate the charge.
+- No investment, tax or legal advice. If asked whether to buy, sell or hold something, start with a
+  plain sentence that you can't recommend trades, with no figures and no citation in it. Then offer
+  the relevant facts from the evidence, cited: what the customer holds, the fund's expense ratio, its
+  price as of its date. You can't move money or change accounts: say so if asked.
 - If a step failed or evidence is missing, say plainly what you couldn't find.
 - Be brief and direct: two to six sentences, plain words, no headings.
 - Never mention tools, steps, evidence numbers other than as citations, customer ids, cents, or
@@ -141,6 +146,9 @@ def _plan_event(plan: Plan, round_: int) -> dict:
 async def route_node(state: EngineState) -> dict:
     if is_small_talk(state["question"]):
         return {"route": "small_talk", "answer": SMALL_TALK_RESPONSE, "citations": [], "outcome": "small_talk"}
+    if is_money_movement(state["question"]):
+        return {"route": "money_movement", "answer": MONEY_MOVEMENT_RESPONSE, "citations": [],
+                "outcome": "money_movement"}
     return {"route": "plan"}
 
 
@@ -251,8 +259,10 @@ async def summarize_node(state: EngineState) -> dict:
 def _citation(e: dict) -> dict:
     if e["kind"] == "document":
         return {"n": e["n"], "kind": "document", "step": e["step"], "chunk_id": e["chunk_id"],
-                "filename": e["filename"], "section": e["section"], "snippet": e["text"][:200]}
-    return {"n": e["n"], "kind": "tool", "step": e["step"], "tool": e["tool"], "attribution": e.get("attribution")}
+                "filename": e["filename"], "section": e["section"], "snippet": e["text"][:200],
+                "label": e.get("label")}
+    return {"n": e["n"], "kind": "tool", "step": e["step"], "tool": e["tool"], "attribution": e.get("attribution"),
+            "label": e.get("label")}
 
 
 async def check_node(state: EngineState) -> dict:
@@ -312,7 +322,7 @@ def build_engine():
         graph.add_node(name, _traced(name, node))
     graph.set_entry_point("validate")
     graph.add_conditional_edges("validate", lambda s: END if s.get("rejection") else "route")
-    graph.add_conditional_edges("route", lambda s: END if s["route"] == "small_talk" else "plan")
+    graph.add_conditional_edges("route", lambda s: "plan" if s["route"] == "plan" else END)
     graph.add_edge("plan", "execute")
     graph.add_conditional_edges("execute", lambda s: "replan" if _needs_replan(s) else "summarize")
     graph.add_edge("replan", "execute")
