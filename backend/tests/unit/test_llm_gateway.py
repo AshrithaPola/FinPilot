@@ -429,3 +429,10 @@ async def test_without_an_image_the_request_is_unchanged():
     await GeminiLLM(client).complete_json("gemini-x", "sys", "q", SCHEMA)
     [message] = create.calls[0]["contents"]
     assert [part.text for part in message.parts] == ["q"]  # text only
+
+
+async def test_gemini_a_structured_answer_keeps_the_default_thinking():
+    client, create = gemini_client(gemini_reply('{"answer": "x", "found": true}'))
+    gateway = GeminiLLM(client, checker_thinking_level="minimal")
+    await gateway.complete_json("m", "sys", "q", {"type": "object"}, checker=False)
+    assert create.calls[0]["config"].thinking_config is None  # only the checkers think minimally

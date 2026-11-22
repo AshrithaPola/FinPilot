@@ -204,6 +204,9 @@ async def run_question(q: ev.Question, judge: bool = True) -> dict:
         "llm_calls": result["llm_calls"], "llm_calls_by_role": result["llm_calls_by_role"],
         "tokens_by_role": result["tokens_by_role"], "est_cost_usd": totals.get("est_cost_usd", 0),
         "retries": totals.get("retries", 0), "embedding_calls": totals.get("embedding_calls", 0),
+        # Gemini 503 "high demand" answers this question's model calls met (each retried by the gateway).
+        "retries_503": sum("503" in f.get("error", "") for s in trace.spans if s.get("kind") == "llm"
+                           for f in s.get("failures", [])),
         "trace_id": result.get("trace_id"),
     }
     if judge:
@@ -225,6 +228,7 @@ async def run_question(q: ev.Question, judge: bool = True) -> dict:
 
 
 RETRY_KINDS = ("timeout", "rate_limited", "unavailable", "daily_quota")  # the model's capacity, not the answer
+RETRY_WAIT_S = 60  # a retry right away lands in the same overload window (the baseline's double timeouts)
 
 
 async def attempt(q: ev.Question, judge: bool = True) -> dict:
@@ -240,6 +244,8 @@ async def attempt(q: ev.Question, judge: bool = True) -> dict:
             kind = classify_error(exc) or "internal"
             failed.append({"kind": kind, "error": f"{type(exc).__name__}: {exc}"[:500]})
             if kind in RETRY_KINDS and len(failed) == 1:
+                failed[-1]["waited_s"] = RETRY_WAIT_S
+                await asyncio.sleep(RETRY_WAIT_S)
                 continue
             return {"id": q.id, "type": q.type, "error": failed[-1]["error"], "failed_attempts": failed}
         record["failed_attempts"] = failed
@@ -351,6 +357,7 @@ async def main_async(args) -> int:
     attempts = [a for r in records for a in r.get("failed_attempts", [])]
     report = {"settings": _settings_snapshot(), "summary": summarize(scored) if scored else {},
               "capacity": {"timeouts": sum(a["kind"] == "timeout" for a in attempts),
+                           "retries_503": sum(r.get("retries_503", 0) for r in scored),
                            "quota_or_overload": sum(a["kind"] != "timeout" for a in attempts),
                            "retried": sum(bool(r.get("failed_attempts")) for r in records),
                            "unanswered_after_retry": len(records) - len(scored)},

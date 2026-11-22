@@ -550,3 +550,57 @@ async def test_with_validation_off_the_answer_skips_the_validators(engine, monke
     off = await engine_graph.answer(AFFORD, ME)
     assert off["llm_calls_by_role"] == {"planner": 1, "summarizer": 1} and off["validation"] == []
     assert off["outcome"] == "answered"
+
+
+async def test_out_of_scope_with_a_money_verb_and_an_account_gets_the_read_only_reply(engine):
+    llm, _ = engine  # FakeLLM's default plan: out of scope
+    result = await engine_graph.answer("yo move my savings stuff over to checking ok", ME)
+    assert result["outcome"] == "money_movement" and result["answer"].startswith("FinPilot is read-only")
+    weather = await engine_graph.answer("What's the weather in Paris?", ME)
+    assert weather["outcome"] == "out_of_scope"
+
+
+def _balance_plan(llm):
+    llm.plan = {"intent": "balance", "out_of_scope": False, "steps": [
+        _step("s1", "financial_data", "get_balance", {"account_type": "checking"})]}
+
+
+async def test_a_not_found_answer_is_labelled_not_found_and_still_validated(engine):
+    llm, _ = engine
+    _balance_plan(llm)
+    llm.answer, llm.found = "I couldn't find a mortgage rate in your records or the bank's documents.", False
+    result = await engine_graph.answer("What's your 30-year mortgage rate?", ME)
+    assert result["outcome"] == "nothing_found" and result["citations"] == []
+    assert result["answer"].startswith("I couldn't find a mortgage rate")  # the explanation is kept
+    [validator] = [c for c in llm.chat_calls if c["role"] == "validator"]
+    assert engine_graph.NOT_FOUND_CHECK in validator["user"]  # the auditor is told what to check
+    assert len(result["validation"]) == 1 and all(v["passed"] for v in result["validation"][0].values())
+
+
+async def test_a_not_found_answer_when_the_evidence_has_the_answer_is_caught(engine):
+    llm, _ = engine
+    _balance_plan(llm)  # the evidence: checking has $3,452.02
+    llm.answer, llm.found = "I couldn't find your checking balance.", False
+    caught = {"passed": False, "reason": "the evidence gives the checking balance, $3,452.02 [1]"}
+    llm.verdict = [{"gatekeeper": PASS, "auditor": caught, "strategist": PASS},
+                   {"gatekeeper": PASS, "auditor": caught, "strategist": PASS}]
+    result = await engine_graph.answer("What's my checking balance?", ME)
+    assert [v["auditor"]["passed"] for v in result["validation"]] == [False, False]
+    assert result["outcome"] == "refused_unverified"  # never shown as "nothing found"
+    regenerate = [c for c in llm.chat_calls if c["role"] == "summarizer"][1]
+    assert "the evidence gives the checking balance" in regenerate["user"]  # the reason went back
+
+
+async def test_the_summarizer_knows_the_records_range_and_a_step_before_it_says_so(engine):
+    llm, accounts = engine
+    accounts_rows = []
+    accounts.call = lambda principal, name, arguments=None: accounts_rows  # no rows before the records start
+    llm.plan = {"intent": "march", "out_of_scope": False, "steps": [
+        _step("s1", "financial_data", "list_transactions", {"start": "2025-03-01", "end": "2025-03-31"})]}
+    llm.answer, llm.found = "There are no transactions for March 2025: your records start on July 1, 2025.", False
+    result = await engine_graph.answer("Show my transactions from March 2025.", ME)
+    [summarizer] = [c for c in llm.chat_calls if c["role"] == "summarizer"]
+    assert "records (accounts, transactions, fees) run from 2025-07-01 to 2026-06-30" in summarizer["user"]
+    assert "the customer's records start on 2025-07-01" in summarizer["user"]  # the step's own note
+    assert summarizer["checker"] is False  # the summarizer keeps the model's default thinking
+    assert result["outcome"] == "nothing_found"

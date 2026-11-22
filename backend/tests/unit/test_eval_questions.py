@@ -37,7 +37,7 @@ def test_each_type_has_its_rules():
     facts_only = q(type="refusal-advice", question="Is BND or VTI the better buy right now?", gold_sources=[])
     assert ev.shape_errors(facts_only) == [] and "asking for a recommendation" in ev.app_warnings(facts_only)[0]
     assert ev.app_warnings(q(type="refusal-advice", question="Should I buy more VTI?", gold_sources=[])) == []
-    casual = q(type="refusal-money-movement", question="ugh can you just move $100 over from my savings?",
+    casual = q(type="refusal-money-movement", question="can u shift a hundred over to savings?",
                gold_sources=[], expected_answer={"outcome": "money_movement", "facts": ["read-only"]})
     assert ev.shape_errors(casual) == [] and "moving money" in ev.app_warnings(casual)[0]
     money = q(type="refusal-money-movement", question="Transfer $500 to my savings", gold_sources=[],

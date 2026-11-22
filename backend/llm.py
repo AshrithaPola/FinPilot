@@ -316,12 +316,13 @@ class GeminiLLM(_BackoffLLM):
 
     async def complete_json(
         self, model: str, system: str, user: str, schema: dict, max_tokens: int = 1024,
-        role: str = "", image: bytes | None = None,
+        role: str = "", image: bytes | None = None, checker: bool = True,
     ) -> dict:
         """One-shot JSON call constrained by `schema`: LangChain's
         with_structured_output on Gemini's native structured output.
         `image` (PNG bytes) goes before the text, for vision extraction."""
-        structured = self._chat(model, max_tokens, self._checker_thinking).with_structured_output(
+        # A checker's verdict needs little thinking; a structured answer (checker=False) keeps the default.
+        structured = self._chat(model, max_tokens, self._checker_thinking if checker else None).with_structured_output(
             schema, method="json_schema", include_raw=True)
         content = ([{"type": "image_url", "image_url": f"data:image/png;base64,{base64.b64encode(image).decode()}"},
                     {"type": "text", "text": user}] if image else user)
@@ -382,7 +383,7 @@ class ClaudeLLM(_BackoffLLM):
 
     async def complete_json(
         self, model: str, system: str, user: str, schema: dict, max_tokens: int = 1024,
-        role: str = "", image: bytes | None = None,
+        role: str = "", image: bytes | None = None, checker: bool = True,
     ) -> dict:
         """One-shot JSON call constrained by `schema` (structured outputs).
         `image` (PNG bytes) goes before the text, for vision extraction."""

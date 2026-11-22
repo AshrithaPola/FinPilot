@@ -42,17 +42,28 @@ def is_small_talk(question: str) -> bool:
     return bool(_SMALL_TALK.match(question.strip()))
 
 
-# A request to move money: the message opens with the request ("transfer",
-# "can you send", "I want to pay") AND names money. Same asymmetry as above:
-# "how much did I transfer in May?" and "send me my statement" stay questions.
+# A request to move money: a request anywhere in the message (a sentence or
+# clause that opens with the verb, "can/could you", "please", "pls", "I need/
+# want (you) to", "help me", with filler words between: "can you just move")
+# or a passive one ("I need $300 moved"), AND money named (an amount, money
+# words, or to/from an account). Same asymmetry as above: "How much did I
+# transfer in May?", "Why did my transfer to savings fail?" and "send me my
+# statement" stay questions.
+_VERB = r"(?:transfer|move|send|pay|wire|withdraw|deposit|zelle|put)"
+_FILLER = r"(?:(?:just|quickly|quick|real\s+quick|kindly|please|pls|plz|now|go\s+ahead\s+and)\s+)*"
 _MOVE_REQUEST = re.compile(
-    r"""^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+(?:want|need|would\s+like|'d\s+like)
-         \s+(?:you\s+)?to\s+|help\s+me\s+|go\s+ahead\s+and\s+)?
-        (?:transfer|move|send|pay|wire|withdraw|deposit|zelle)\b""",
+    rf"""(?:^|[.!?,;:]\s*|\b(?:can|could|would|will)\s+(?:you|u)\s+|\bplease\s+|\bpls\s+|\bplz\s+
+          |\bi\s+(?:want|need|would\s+like|'d\s+like)\s+(?:you\s+|u\s+)?to\s+|\bhelp\s+me\s+)
+        (?:(?:hey|hi|ugh|ok|okay|so|yo)\W+)*{_FILLER}{_VERB}\b
+      | \bi\s+(?:want|need|would\s+like|'d\s+like)\s+.{{0,40}}?\b(?:moved|transferred|sent|paid|wired)\b""",
     re.IGNORECASE | re.VERBOSE,
 )
-_MONEY = re.compile(r"\$\s?\d|\b(?:money|funds|dollars|bill|rent)\b|\b(?:to|from|into)\s+(?:my|the)\s+"
-                    r"(?:savings|checking|card|credit\s+card|account)\b", re.IGNORECASE)
+_MONEY = re.compile(r"\$\s?\d|\b\d[\d,]*(?:\.\d{2})?\s+(?:bucks|dollars)\b|\b(?:money|funds|dollars|bucks|cash|bill|rent)\b"
+                    r"|\b(?:to|from|into|over\s+from)\s+(?:my\s+|the\s+)?(?:savings|checking|card|credit\s+card|account)\b",
+                    re.IGNORECASE)
+# The fallback after the planner (see engine.graph): a money-moving verb and an account word.
+_MOVE_VERB = re.compile(rf"\b{_VERB}\b", re.IGNORECASE)
+_ACCOUNT = re.compile(r"\b(?:savings|checking|account|card)\b", re.IGNORECASE)
 
 MONEY_MOVEMENT_RESPONSE = (
     "FinPilot is read-only and can't move money: no transfers, payments or withdrawals. "
@@ -82,4 +93,10 @@ def asks_for_advice(question: str) -> bool:
 
 def is_money_movement(question: str) -> bool:
     text = question.strip()
-    return bool(_MOVE_REQUEST.match(text) and _MONEY.search(text))
+    return bool(_MOVE_REQUEST.search(text) and _MONEY.search(text))
+
+
+def mentions_moving_money(question: str) -> bool:
+    """Looser, for after the planner found no question to answer: a money-moving
+    verb and an account word ("shift... uh, move it over to savings")."""
+    return bool(_MOVE_VERB.search(question) and _ACCOUNT.search(question))

@@ -113,3 +113,27 @@ def test_market_tool_arguments_are_refused_before_sql(name, arguments):
         MarketTools(engine=None).call(USER, name, arguments)
     with pytest.raises(ToolError, match="signed-in"):
         MarketTools(engine=None).call(None, "get_price", {"symbol": "VTI"})
+
+
+def test_the_difference_tool_subtracts_and_gives_the_size():
+    from tools.calculator import calculate
+
+    out = calculate("difference", {"a_cents": -54940, "b_cents": -25998})  # April's and May's groceries
+    assert out["difference_cents"] == -28942 and out["absolute_cents"] == 28942
+
+
+def test_the_planner_sees_each_arguments_allowed_values_and_fee_aliases_are_accepted():
+    from engine.plan import planner_prompt
+    from tools.accounts import FeeArgs
+
+    prompt = planner_prompt("2025-07-01", "2026-06-30", "2026-06-30")
+    assert "fee_type?: overdraft | nsf | monthly_maintenance | atm | foreign_transaction | wire | late_payment" in prompt
+    assert "account_type?: checking | savings | credit | brokerage" in prompt and "- difference(" in prompt
+    for alias, name in (("late", "late_payment"), ("late_fee", "late_payment"), ("Late Fee", "late_payment"),
+                        ("maintenance", "monthly_maintenance"), ("atm-fee", "atm"), ("fx", "foreign_transaction")):
+        assert FeeArgs.model_validate({"fee_type": alias}).fee_type == name
+    import pytest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        FeeArgs.model_validate({"fee_type": "bogus"})  # anything else is still refused

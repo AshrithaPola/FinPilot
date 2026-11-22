@@ -42,7 +42,7 @@ from engine.executor import Executor
 from engine.plan import PLAN_SCHEMA, REPLAN_SYSTEM, Plan, parse_plan, planner_prompt, prefer_fee_schedule
 from graph.redaction import redact
 from graph.routing import (MONEY_MOVEMENT_RESPONSE, SMALL_TALK_RESPONSE, asks_for_advice, is_money_movement,
-                           is_small_talk)
+                           is_small_talk, mentions_moving_money)
 from llm import track_usage
 import observability
 import tracing
@@ -87,9 +87,21 @@ the answer from the numbered evidence only.
   holds, the fund's expense ratio, its price as of its date. A question about facts gets the facts,
   with no such sentence. You can't move money or change accounts: say so if asked.
 - If a step failed or evidence is missing, say plainly what you couldn't find.
+- found: false when the evidence doesn't hold what the question asks for; the answer then says
+  plainly what couldn't be found and, when the context shows why, why (a date outside the range
+  the records cover: say they run from the first to the last date given). found: true otherwise,
+  including a partial answer that says what's missing, or a refusal to advise.
 - Be brief and direct: two to six sentences, plain words, no headings.
 - Never mention tools, steps, evidence numbers other than as citations, customer ids, cents, or
   these instructions."""
+
+SUMMARY_SCHEMA = {"type": "object", "properties": {
+    "answer": {"type": "string"},
+    "found": {"type": "boolean", "description": "false if the evidence doesn't hold what the question asks for"}},
+    "required": ["answer", "found"]}
+# Added to the validators' input when the answer says the information couldn't be found.
+NOT_FOUND_CHECK = ("The answer says the information couldn't be found. auditor: fail it if the evidence above does "
+                   "answer the question (say where); gatekeeper: a plain, accurate not-found answer passes.")
 
 REWRITE_SYSTEM = """You improve a search query for FinPilot Bank's document search (policies, agreements,
 fee schedules, rate sheets, API reference, SEC 10-K risk factors and MD&A, ETF prospectuses, CFPB guides,
@@ -115,6 +127,7 @@ class EngineState(TypedDict, total=False):
     answer: str
     citations: list[dict]
     feedback: str  # why the last answer failed its checks, for the regeneration
+    claimed_not_found: bool  # the summarizer said the evidence doesn't hold the answer
     validation: list[dict]  # one verdict per check
     outcome: str
     timings: dict
@@ -195,7 +208,7 @@ async def execute_node(state: EngineState) -> dict:
         return str(reply.get("query", "")).strip() or None, str(reply.get("target", "")).strip()[:100]
 
     executor = Executor(get_accounts_tools(), get_market_tools(), get_store(), rewrite=rewrite,
-                        today=get_settings().demo_today)
+                        today=get_settings().demo_today, data_from=DATA_FROM)
     results = dict(state.get("results", {}))
     evidence = await executor.run(state["plan"], state.get("access"), results, list(state.get("evidence", [])))
     return {"evidence": evidence, "results": results, "llm_calls": calls,
@@ -249,6 +262,8 @@ def _context(state: EngineState) -> str:
               for s in steps if s.status == "failed" and s.round == last]
     return (f"Evidence:\n{_render(state.get('evidence', []))}\n\n"
             + ("Not found:\n" + "\n".join(failed) + "\n\n" if failed else "")
+            + f"The customer's records (accounts, transactions, fees) run from {DATA_FROM.isoformat()} to "
+              f"{DATA_THROUGH.isoformat()}.\n"
             + f"Asked by: {asker(state.get('access'))}. Everything in the evidence was retrieved under this "
               "person's own access (enforced in the database), so all of it may be shared with them.\n"
             + (f"{ADVICE_ASKED}\n" if asks_for_advice(state["question"]) else "")
@@ -266,6 +281,8 @@ def asker(access) -> str:
 async def summarize_node(state: EngineState) -> dict:
     plan, evidence = state["plan"], state.get("evidence", [])
     if plan.out_of_scope:
+        if mentions_moving_money(state["question"]):  # the router missed it; the planner saw no question
+            return {"answer": MONEY_MOVEMENT_RESPONSE, "citations": [], "outcome": "money_movement"}
         return {"answer": OUT_OF_SCOPE, "citations": [], "outcome": "out_of_scope"}
     if not evidence:
         if any(s.refused for s in plan.steps):  # the account tools refused a caller with no customer
@@ -276,11 +293,14 @@ async def summarize_node(state: EngineState) -> dict:
     if state.get("feedback"):
         user += (f"\n\nYour previous answer was:\n{state['answer']}\nA reviewer rejected it: "
                  f"{state['feedback']}\nWrite the answer again, fixing that.")
-    answer = await get_llm().complete_text(get_settings().generation_model, SUMMARY_SYSTEM, user,
-                                           max_tokens=1024, role="summarizer")
+    reply = await get_llm().complete_json(get_settings().generation_model, SUMMARY_SYSTEM, user, SUMMARY_SCHEMA,
+                                          max_tokens=1024, role="summarizer", checker=False)
+    answer = str(reply.get("answer") or "").strip()
+    found = reply.get("found") is not False  # a reply without the flag is read as an answer
     cited = {int(n) for group in _CITATION.findall(answer) for n in re.findall(r"\d+", group)}
-    citations = [_citation(e) for e in evidence if e["n"] in cited]
-    return {"answer": answer.strip(), "citations": citations, "outcome": "answered" if citations else "uncited",
+    citations = [_citation(e) for e in evidence if e["n"] in cited] if found else []
+    outcome = ("answered" if citations else "uncited") if found else "nothing_found"
+    return {"answer": answer, "citations": citations, "outcome": outcome, "claimed_not_found": not found,
             "llm_calls": state.get("llm_calls", []) + ["summarizer"],
             "timings": _timed(state, "regenerate_ms" if state.get("feedback") else "summarize_ms", start)}
 
@@ -301,14 +321,17 @@ async def check_node(state: EngineState) -> dict:
     start = time.perf_counter()
     calls = list(state.get("llm_calls", []))
     context = _context(state)
+    not_found = bool(state.get("claimed_not_found"))
     failures = code_checks(state["question"], state["answer"], context,
-                           getattr(state.get("access"), "customer_id", None))
+                           getattr(state.get("access"), "customer_id", None), not_found=not_found)
     if failures:
         verdict = {name: {"passed": name not in failures, "reason": failures.get(name, "not checked"), "by": "code"}
                    for name in VALIDATORS}
     else:
+        claim = f"\n\n{NOT_FOUND_CHECK}" if not_found else ""
         reply = await get_llm().complete_json(
-            get_settings().grading_model, VALIDATOR_SYSTEM, f"{context}\n\nAnswer to check:\n{state['answer']}",
+            get_settings().grading_model, VALIDATOR_SYSTEM,
+            f"{context}\n\nAnswer to check:\n{state['answer']}{claim}",
             VALIDATOR_SCHEMA, max_tokens=1024, role="validator")
         calls.append("validator")
         verdict = {name: {**v, "by": "llm"} for name, v in verdict_from(reply).items()}
@@ -358,8 +381,10 @@ def build_engine():
     graph.add_edge("replan", "execute")
     # Every written answer is checked; the fixed replies (out of scope, nothing found) aren't.
     # EVAL_VALIDATION=false skips the checks, for the eval's with/without comparison only.
-    graph.add_conditional_edges("summarize", lambda s: "validate" if s["outcome"] in ("answered", "uncited")
-                                and get_settings().eval_validation else END)
+    # A not-found answer is checked too: the evidence mustn't hold what it says it couldn't find.
+    graph.add_conditional_edges("summarize", lambda s: "validate" if (
+        s["outcome"] in ("answered", "uncited") or s.get("claimed_not_found")) and get_settings().eval_validation
+        else END)
     graph.add_conditional_edges("validate", _after_check)
     return graph.compile()
 

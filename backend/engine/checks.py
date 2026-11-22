@@ -140,17 +140,21 @@ def wrong_target(question: str, answer: str, sources: str) -> str | None:
     return None
 
 
-def code_checks(question: str, answer: str, sources: str, customer_id: str | None) -> dict:
-    """The checks that need no LLM. Returns {validator: reason} for each failure."""
+def code_checks(question: str, answer: str, sources: str, customer_id: str | None, not_found: bool = False) -> dict:
+    """The checks that need no LLM. Returns {validator: reason} for each failure.
+    A not-found answer cites nothing on purpose: the citation and target checks
+    don't apply (the model's auditor checks the evidence really lacks the answer)."""
     failures = {}
     bad = ungrounded_amounts(answer, f"{sources}\n{question}")
     if bad:
         failures["auditor"] = f"these figures aren't in the evidence: {', '.join(bad)}"
-    elif not _CITE.search(answer):
+    elif not _CITE.search(answer) and not not_found:
         failures["auditor"] = "it cites no evidence"
     passages = set(_DOC_EVIDENCE.findall(sources))
     cited = {n for group in _CITE.findall(answer) for n in re.findall(r"\d+", group)}
-    if (target := wrong_target(question, answer, sources)) is not None:
+    if not_found:
+        pass
+    elif (target := wrong_target(question, answer, sources)) is not None:
         failures["gatekeeper"] = (f"the question asks about the {target}, but no evidence the answer cites is "
                                   "about it: answer from that, or say it couldn't be found")
     elif _WHY.search(question) and passages and not passages & cited:

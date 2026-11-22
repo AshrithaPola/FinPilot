@@ -38,6 +38,11 @@ class TotalArgs(Args):
     amounts_cents: Annotated[list[Cents], Field(min_length=1, max_length=1000)]
 
 
+class DifferenceArgs(Args):
+    a_cents: Cents
+    b_cents: Cents
+
+
 class InterestArgs(Args):
     principal_cents: Annotated[int, Field(ge=0, le=10**13)]
     annual_rate_pct: Annotated[Decimal, Field(ge=0, le=100, max_digits=10, decimal_places=6)]
@@ -65,6 +70,12 @@ def _afford(args: AffordArgs) -> dict:
     return {"remaining_cents": remaining, "affordable": remaining >= args.keep_at_least_cents,
             "shortfall_cents": max(0, args.keep_at_least_cents - remaining),
             "formula": "remaining = balance - amount; affordable if remaining >= keep_at_least"}
+
+
+def _difference(args: DifferenceArgs) -> dict:
+    difference = args.a_cents - args.b_cents
+    return {"difference_cents": difference, "absolute_cents": abs(difference),
+            "formula": "difference = a - b; absolute = |a - b| (two money-out totals: absolute is how much more)"}
 
 
 def _total(args: TotalArgs) -> dict:
@@ -104,6 +115,8 @@ TOOLS = {t.name: t for t in (
     Tool("afford", "Whether a purchase leaves at least keep_at_least_cents in the account: "
          "remaining balance, yes or no, and the shortfall.", AffordArgs, _afford),
     Tool("total", "Sum of amounts in cents (e.g. transactions from list_transactions).", TotalArgs, _total),
+    Tool("difference", "a minus b in cents, and its absolute value (e.g. April's total minus May's: for two "
+         "money-out totals, the absolute value is how much more).", DifferenceArgs, _difference),
     Tool("interest", "Interest on a principal at an annual rate over a number of days, simple or "
          "compounded daily.", InterestArgs, _interest),
     Tool("percent_change", "Percent change from an old value to a new one.", ChangeArgs, _change),

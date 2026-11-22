@@ -241,9 +241,10 @@ class Executor:
     """`rewrite(query, hits) -> str | None` is the documents agent's LLM
     (one call per weak search); `today` the date a missing as_of means."""
 
-    def __init__(self, accounts_tools, market_tools, store, rewrite=None, today: date | None = None):
+    def __init__(self, accounts_tools, market_tools, store, rewrite=None, today: date | None = None,
+                 data_from: date | None = None):
         self._accounts, self._market, self._store = accounts_tools, market_tools, store
-        self._rewrite, self._today = rewrite, today
+        self._rewrite, self._today, self._data_from = rewrite, today, data_from
 
     async def run(self, plan: Plan, principal, results: dict | None = None,
                   evidence: list[dict] | None = None) -> list[dict]:
@@ -259,6 +260,7 @@ class Executor:
                     step.result = await self._step(step, resolve(step.arguments, results), principal)
                     step.status = "done"
                     results[step.id] = step.result
+                    step.note = step.note or self._before_records(step)
                 except (StepError, ToolError) as exc:
                     step.status, step.error = "failed", str(exc)
                     step.refused = isinstance(exc, AccessRefused)
@@ -271,6 +273,18 @@ class Executor:
                 evidence.append({"n": len(evidence) + 1, **item})
                 step.evidence.append(len(evidence))
         return evidence
+
+    def _before_records(self, step: Step) -> str | None:
+        """A note for an account-data step asking only about days before the records
+        start, so the answer can say why it found nothing."""
+        if step.tool not in ACCOUNT_TOOLS or not self._data_from:
+            return None
+        try:
+            end = date.fromisoformat(str(step.arguments.get("end") or step.arguments.get("start") or ""))
+        except ValueError:
+            return None
+        start = self._data_from.isoformat()
+        return f" (the customer's records start on {start}: nothing before that)" if end < self._data_from else None
 
     async def _step(self, step: Step, arguments: dict, principal):
         if step.agent == "calculation":
@@ -341,9 +355,11 @@ class Executor:
         rows = step.result if isinstance(step.result, list) else [step.result]
         label = source_label(step, rows)
         if not rows:
-            return [{"kind": "tool", "step": step.id, "tool": step.tool, "data": "no rows", "label": label}]
+            return [{"kind": "tool", "step": step.id, "tool": step.tool, "data": "no rows", "label": label,
+                     "note": step.note or ""}]
         attribution = next((r.get("attribution") for r in rows if isinstance(r, dict) and r.get("attribution")), None)
         shown = presentable(rows[:MAX_ROWS_SHOWN])
-        note = f" (first {MAX_ROWS_SHOWN} of {len(rows)} rows)" if len(rows) > MAX_ROWS_SHOWN else ""
+        note = (step.note or "") + (f" (first {MAX_ROWS_SHOWN} of {len(rows)} rows)"
+                                    if len(rows) > MAX_ROWS_SHOWN else "")
         return [{"kind": "tool", "step": step.id, "tool": step.tool, "attribution": attribution,
                  "data": shown, "note": note, "label": label}]

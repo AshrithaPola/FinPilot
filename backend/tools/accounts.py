@@ -23,11 +23,12 @@ quantities are strings, so no float rounding. A balance is the account's
 starting balance plus its transactions minus its fees that weren't waived,
 as of its last posted activity; other arithmetic is the calculator's job.
 """
+import re
 from datetime import date
 from typing import Annotated, Literal
 
 import sqlalchemy as sa
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from tools.common import AccessRefused, Args, NoArgs, Tool, ToolError, read_only, rows, validate
 
@@ -64,9 +65,28 @@ class TransactionArgs(_Period):
     category: Annotated[str, Field(pattern=r"^[a-z_]{1,32}$")] | None = None
 
 
+FEE_TYPE_ALIASES = {"late": "late_payment", "late_fee": "late_payment", "late_payment_fee": "late_payment",
+                    "maintenance": "monthly_maintenance", "monthly": "monthly_maintenance",
+                    "monthly_fee": "monthly_maintenance", "maintenance_fee": "monthly_maintenance",
+                    "foreign": "foreign_transaction", "fx": "foreign_transaction",
+                    "foreign_fee": "foreign_transaction", "foreign_transaction_fee": "foreign_transaction",
+                    "atm_fee": "atm", "overdraft_fee": "overdraft", "od": "overdraft",
+                    "returned_item": "nsf", "nsf_fee": "nsf", "wire_fee": "wire"}
+
+
 class FeeArgs(_Period):
     fee_type: FeeType | None = None
     include_waived: bool = True
+
+    @field_validator("fee_type", mode="before")
+    @classmethod
+    def _alias(cls, value):
+        """Common names for a fee type ("late", "late fee", "maintenance") as the bank's
+        own; anything else is left for the strict check to refuse."""
+        if not isinstance(value, str):
+            return value
+        key = re.sub(r"[\s-]+", "_", value.strip().lower())
+        return FEE_TYPE_ALIASES.get(key, key)
 
 
 def _accounts(conn, args: NoArgs) -> list[dict]:

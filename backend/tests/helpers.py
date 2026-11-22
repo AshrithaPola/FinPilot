@@ -45,6 +45,7 @@ class FakeLLM:
         self.replan: dict = {"intent": "", "out_of_scope": False, "steps": []}  # what the re-planner returns
         self.rewrite: str = ""  # the documents agent's rewritten query
         self.rewrite_target: str = ""  # what the question names, which the rewrite must keep
+        self.found: bool | list[bool] = True  # the summarizer's "found" flag (a list pops one per call)
         # The validators' verdict (a list pops one per call); default: all pass.
         self.verdict: dict | list[dict] = {n: {"passed": True, "reason": "ok"}
                                            for n in ("gatekeeper", "auditor", "strategist")}
@@ -56,9 +57,15 @@ class FakeLLM:
         return self.answer.pop(0) if isinstance(self.answer, list) else self.answer
 
     async def complete_json(self, model, system, user, schema, max_tokens=1024, role="",
-                            image=None) -> dict:
+                            image=None, checker=True) -> dict:
         self.chat_calls.append({"model": model, "system": system, "user": user, "role": role,
-                                "image": image})
+                                "image": image, "checker": checker})
+        if role == "summarizer":  # the engine's structured answer: {"answer", "found"}
+            if self.generate_error is not None:
+                raise self.generate_error
+            answer = self.answer.pop(0) if isinstance(self.answer, list) else self.answer
+            found = self.found.pop(0) if isinstance(self.found, list) else self.found
+            return {"answer": answer, "found": found}
         if "receipt reader" in system:
             return dict(self.receipt)
         if role == "planner":

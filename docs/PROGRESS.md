@@ -1255,7 +1255,8 @@ Where they fit, and nothing else moved:
 | 1 | b3f3cd1 | The eval set's format, three worked examples, its validator and the writing guide |
 | 2 | e2b0238 | The demo customers' fact sheet (plain SQL as the owner) and independent questions |
 | 3 | 0485190 | The author's 30 questions (33 with the examples), validated on Neon; canaries; independent totals |
-| 4 | this commit | The eval runner, the baseline run (re-scored after the review's corrections) and the eval-only validation switch |
+| 4 | 28b6929 | The eval runner, the baseline run (re-scored after the review's corrections) and the eval-only validation switch |
+| 5 | this commit | Fixes for the baseline's root causes: fee-type names, a difference tool, the money-movement router, not-found labelling, the retry wait |
 
 - **The set:** `backend/eval/questions.jsonl`, one JSON question per line:
   id, question, asked_as (a demo customer or staff), type (11 types, from
@@ -1330,6 +1331,27 @@ Where they fit, and nothing else moved:
   76.6%; over the 31 answered, gold cited 81.4%, recall@5 0.92, MRR 0.71,
   faithful 95.8%, canary leaks 0, false refusals 8.3%, 12.3 s and 3.1
   model calls a question, about $0.09 for the run.
+- **Root causes, then fixes** (commit 5):
+  - *Timeouts:* not the questions (no loop, prompts of 2-4k tokens): Gemini
+    503 bursts ran single calls past the app's 45 s budget, and the
+    runner's immediate retry landed in the same burst. The runner now waits
+    60 s before a retry and counts 503 retries per question; the app keeps
+    its 45 s limit.
+  - *Router:* the request had to open the message with the verb right
+    after; now a request anywhere (after "hey", with "just" between),
+    passive requests and bare amounts count, and when the planner finds
+    nothing in scope, a money verb plus an account word gets the read-only
+    reply.
+  - *Not found:* the outcome came from citations alone, and an empty tool
+    result is evidence ("no rows") the answer cited. The summarizer now
+    returns a structured found flag: not found is outcome nothing_found
+    with no citations, still validated (the auditor is told to fail it if
+    the evidence holds the answer). The summarizer sees the records' range,
+    and a step before it says the records start 2025-07-01.
+  - *Fee types:* the planner saw argument names only. Its catalog now shows
+    each argument's allowed values from the tool's schema, and fee types
+    accept common aliases ("late", "late fee", "maintenance").
+  - *Subtraction:* a difference tool (a minus b, and its size).
 
 ## Phase 10 notes (from 2026-11-14)
 

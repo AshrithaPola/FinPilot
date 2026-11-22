@@ -54,6 +54,8 @@ How to plan common questions:
   calculation afford with balance_cents "$s1[0].balance_cents".
 - Spending ("how much did I spend on groceries in May"): list_transactions with the category and
   dates (limit 200), then calculation total of "$s1[*].amount_cents".
+- Comparing two amounts ("how much more on groceries in April than in May"): each total as above,
+  then calculation difference with a_cents "$s3.total_cents" and b_cents "$s4.total_cents".
 - Companies and funds: market tools for the numbers, a documents search for what the filing or
   prospectus says.
 - Advice ("should I buy more VTI?"): not out of scope. The answer won't advise, but plan the facts
@@ -122,13 +124,29 @@ class Plan:
     dropped: list[str] = field(default_factory=list)  # why steps were left out
 
 
+def _allowed(prop: dict) -> list | None:
+    """The values an argument allows, from its JSON schema (a Literal, optional or not)."""
+    if "enum" in prop:
+        return prop["enum"]
+    for option in prop.get("anyOf", []):
+        if "enum" in option:
+            return option["enum"]
+    return None
+
+
 def _catalog(tools: dict) -> str:
+    """Each tool with its arguments, and for an argument with fixed values, the
+    values themselves (from the tool's own schema, so the planner never guesses)."""
     lines = []
     for name, tool in tools.items():
         schema = tool.args.model_json_schema()
-        args = ", ".join(f"{k}{'' if k in schema.get('required', []) else '?'}"
-                         for k in schema.get("properties", {}))
-        lines.append(f"- {name}({args}): {tool.description}")
+        args = []
+        for k, prop in schema.get("properties", {}).items():
+            arg = f"{k}{'' if k in schema.get('required', []) else '?'}"
+            if values := _allowed(prop):
+                arg += ": " + " | ".join(str(v) for v in values)
+            args.append(arg)
+        lines.append(f"- {name}({', '.join(args)}): {tool.description}")
     return "\n".join(lines)
 
 

@@ -61,8 +61,10 @@ async def test_a_timeout_is_retried_once_and_both_attempts_are_kept(monkeypatch)
         return {"id": q.id, "outcome": "answered"}
 
     monkeypatch.setattr(run, "run_question", flaky)
+    monkeypatch.setattr(run, "RETRY_WAIT_S", 0)
     record = await run.attempt(_q())
     assert len(calls) == 2 and record["retried"] and record["failed_attempts"][0]["kind"] == "timeout"
+    assert record["failed_attempts"][0]["waited_s"] == 0  # the wait before the retry is recorded
 
     async def broken(q, judge=True):
         raise ValueError("a bug, not capacity")

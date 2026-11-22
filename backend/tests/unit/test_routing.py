@@ -57,6 +57,13 @@ MOVE_MONEY = [
     "please pay my rent",
     "I want to move money from my checking to my savings",
     "Could you wire $2,000 to my brother?",
+    # Casual phrasings the first router missed (the eval set's, and the review's).
+    "ugh I'm about to overdraft again, can you just move $100 over from my savings real quick?",
+    "Hey, could you move $50 into my savings?",
+    "Can you please just send $40 to my credit card",
+    "I need $300 moved from savings to checking",
+    "Move fifty bucks into savings for me",
+    "pls transfer 200 to checking",
 ]
 ABOUT_MONEY = [
     "How much did I transfer in May 2026?",  # a question about past transfers
@@ -64,6 +71,10 @@ ABOUT_MONEY = [
     "Why was I charged $15 on April 6, 2026?",
     "Can I afford $1,200 this month and stay above $500?",
     "pay attention to the overdraft policy: what does it say?",
+    "Why did my transfer to savings fail?",
+    "Did my rent payment go through?",
+    "How do I send money with Zelle?",
+    "Should I move my savings into SCHD?",  # advice, not a request to move money
 ]
 
 
@@ -103,3 +114,11 @@ def test_requests_for_a_recommendation_are_recognised(question):
 @pytest.mark.parametrize("question", WANTS_FACTS)
 def test_questions_about_facts_are_not_treated_as_advice(question):
     assert not asks_for_advice(question)
+
+
+def test_the_looser_fallback_needs_a_money_verb_and_an_account():
+    from graph.routing import mentions_moving_money
+
+    assert mentions_moving_money("yo move my savings stuff over to checking ok")
+    assert not mentions_moving_money("what's the weather in Paris?")
+    assert not mentions_moving_money("move fast and break things")  # no account
