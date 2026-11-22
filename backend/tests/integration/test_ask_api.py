@@ -45,7 +45,15 @@ def test_a_customer_gets_their_own_balance_and_the_calculation(bank, app_env):
                                               "keep_at_least_cents": 50_000}),
         _step("s3", "documents", "search", {"query": "overdraft fee cushion"}),
     ]}
-    app_env.answer = "You'd have money left [1][2]; the overdraft fee is $15.00 [3]."
+    from db.access import Access
+    from deps import get_accounts_tools
+    from engine.executor import dollars
+
+    # The answer states the calculation's result (a code check requires it): what cust-0001 has left.
+    [row] = get_accounts_tools().call(Access(org_id=synthetic.BANK_ORG, clearance=0, customer_id="cust-0001"),
+                                      "get_balance", {"account_id": "cust-0001-chk"})
+    left = dollars(row["balance_cents"] - 120_000)
+    app_env.answer = f"You'd have {left} left [1][2]; the overdraft fee is $15.00 [3]."
     body = bank.post("/ask", headers=_as("uid-cust-1"), json={"question": "Can I afford $1,200?"}).json()
     assert [s["status"] for s in body["plan"]["steps"]] == ["done", "done", "done"]
     assert body["llm_calls_by_role"] == {"planner": 1, "summarizer": 1, "validator": 1}

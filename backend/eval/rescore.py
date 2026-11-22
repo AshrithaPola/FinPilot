@@ -130,7 +130,12 @@ async def main_async(args) -> int:
                 "overall_with_unanswered_as_failures": with_failures(scored, unanswered, by_id),
                 "records": scored + unanswered}
     (folder / "report.rescored.json").write_text(json.dumps(rescored, indent=2, default=str), encoding="utf-8")
-    (folder / "NOTES.md").write_text(notes(questions, judge_errors), encoding="utf-8")
+    # The corrections and judge errors replace their own sections; anything else in NOTES.md stays.
+    notes_file = folder / "NOTES.md"
+    kept = notes_file.read_text(encoding="utf-8") if notes_file.exists() else ""
+    kept = kept.split("\n## Eval-set corrections", 1)[0].rstrip()
+    generated = notes(questions, judge_errors).split("\n", 2)[2]  # without its "# Run notes" title
+    notes_file.write_text((kept + "\n\n" if kept else "# Run notes\n\n") + generated, encoding="utf-8")
     print(json.dumps({"overall": rescored["summary"]["overall"],
                       "with_unanswered_as_failures": rescored["overall_with_unanswered_as_failures"],
                       "false_refusal_rate": rescored["summary"]["false_refusal_rate"]}, indent=1))

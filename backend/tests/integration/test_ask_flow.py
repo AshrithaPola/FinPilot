@@ -20,7 +20,7 @@ SEARCH = {"intent": "policy", "out_of_scope": False, "steps": [
      "purpose": "find the accrual rule"},
     {"id": "s2", "agent": "calculation", "tool": "total", "arguments_json": '{"amounts_cents": [150, 150]}',
      "purpose": "two months"}]}
-ANSWER = "Vacation days accrue at 1.5 per month [1]."
+ANSWER = "Vacation days accrue at 1.5 per month [1]; the two months total $3.00 [2]."  # states the total
 
 
 def _setup(app_env):
