@@ -113,15 +113,31 @@ def _transactions(conn, args: TransactionArgs) -> list[dict]:
 
 
 def _fees(conn, args: FeeArgs) -> list[dict]:
+    """Each fee, and for one a transaction caused, the account's balance right after that
+    transaction posted and before its own fee: what an overdraft's "more than $50.00
+    overdrawn" rests on (starting balance, plus every transaction up to and including it,
+    minus the fees charged before it)."""
     return rows(conn, """
-        SELECT fee_id, account_id, txn_id, fee_type, amount_cents, assessed_on, waived
-        FROM fees
-        WHERE (CAST(:account_id AS text) IS NULL OR account_id = :account_id)
-          AND (CAST(:start AS date) IS NULL OR assessed_on >= :start)
-          AND (CAST(:end AS date) IS NULL OR assessed_on <= :end)
-          AND (CAST(:fee_type AS text) IS NULL OR fee_type = :fee_type)
-          AND (:include_waived OR NOT waived)
-        ORDER BY assessed_on DESC, fee_id DESC
+        SELECT f.fee_id, f.account_id, f.txn_id, f.fee_type, f.amount_cents, f.assessed_on, f.waived,
+               CASE WHEN t.txn_id IS NULL THEN NULL ELSE CAST(
+                   a.starting_balance_cents
+                   + (SELECT sum(t2.amount_cents) FROM transactions t2
+                      WHERE t2.account_id = t.account_id
+                        AND (t2.posted_on < t.posted_on OR (t2.posted_on = t.posted_on AND t2.txn_id <= t.txn_id)))
+                   - (SELECT coalesce(sum(f2.amount_cents), 0) FROM fees f2
+                      WHERE f2.account_id = t.account_id AND NOT f2.waived
+                        AND (f2.assessed_on < t.posted_on
+                             OR (f2.assessed_on = t.posted_on AND f2.txn_id < t.txn_id)))
+                   AS bigint) END AS balance_after_cents
+        FROM fees f
+        LEFT JOIN transactions t ON t.txn_id = f.txn_id
+        LEFT JOIN accounts a ON a.account_id = t.account_id
+        WHERE (CAST(:account_id AS text) IS NULL OR f.account_id = :account_id)
+          AND (CAST(:start AS date) IS NULL OR f.assessed_on >= :start)
+          AND (CAST(:end AS date) IS NULL OR f.assessed_on <= :end)
+          AND (CAST(:fee_type AS text) IS NULL OR f.fee_type = :fee_type)
+          AND (:include_waived OR NOT f.waived)
+        ORDER BY f.assessed_on DESC, f.fee_id DESC
         LIMIT :limit
     """, args.model_dump())
 
@@ -165,7 +181,9 @@ TOOLS = {t.name: t for t in (
          "health, home, travel, housing, subscriptions, income, transfer, cash, card_payment, payment, "
          "interest) and limit (at most 200).", TransactionArgs, _transactions),
     Tool("list_fees", "Fees charged to the customer, newest first; optional account, date range, "
-         "fee type, include_waived and limit (at most 200).", FeeArgs, _fees),
+         "fee type, include_waived and limit (at most 200). For a fee a transaction caused, "
+         "balance_after_cents is the account's balance right after that transaction (before the fee).",
+         FeeArgs, _fees),
     Tool("list_holdings", "The customer's investment holdings: symbol, name, quantity, cost basis.",
          NoArgs, _holdings),
 )}

@@ -37,7 +37,8 @@ from bank.synthetic import END as DATA_THROUGH
 from bank.synthetic import START as DATA_FROM
 from config import get_settings
 from deps import get_accounts_tools, get_llm, get_market_tools, get_store
-from engine.checks import VALIDATOR_SCHEMA, VALIDATOR_SYSTEM, VALIDATORS, code_checks, verdict_from
+from engine.checks import (VALIDATOR_SCHEMA, VALIDATOR_SYSTEM, VALIDATORS, code_checks, missing_calculation,
+                           verdict_from)
 from engine.executor import Executor
 from engine.plan import PLAN_SCHEMA, REPLAN_SYSTEM, Plan, parse_plan, planner_prompt, prefer_fee_schedule
 from graph.redaction import redact
@@ -78,6 +79,10 @@ the answer from the numbered evidence only.
   period than the evidence covers (say, a balance "today" when it's as of an earlier day), say which
   date the figures are for. Never present figures for one date as another's.
 - Say when a price is a synthetic demo price.
+- When the evidence holds two versions of a document (the one in force on the date asked about and
+  today's), say which applied when, and what changed and from when.
+- State each calculation result in the evidence (a total, a difference, what's left): it's why the
+  calculation was run.
 - A "why" question (why a fee, a charge, a hold, a decision): explain the rule from the bank's
   documents that caused it, with its condition (for a fee, when it applies and when it doesn't), cite
   that passage, and tie it to the customer's own data. Don't just restate the charge.
@@ -324,8 +329,14 @@ async def check_node(state: EngineState) -> dict:
     not_found = bool(state.get("claimed_not_found"))
     failures = code_checks(state["question"], state["answer"], context,
                            getattr(state.get("access"), "customer_id", None), not_found=not_found)
+    if not not_found and "auditor" not in failures and (missing := missing_calculation(state["answer"],
+                                                                                      state["plan"].steps)):
+        failures["auditor"] = missing
     if failures:
         verdict = {name: {"passed": name not in failures, "reason": failures.get(name, "not checked"), "by": "code"}
+                   for name in VALIDATORS}
+    elif get_settings().eval_validation == "code":  # eval only: the code checks, not the model's
+        verdict = {name: {"passed": True, "reason": "code checks passed; model validator off (eval)", "by": "code"}
                    for name in VALIDATORS}
     else:
         claim = f"\n\n{NOT_FOUND_CHECK}" if not_found else ""
@@ -383,7 +394,7 @@ def build_engine():
     # EVAL_VALIDATION=false skips the checks, for the eval's with/without comparison only.
     # A not-found answer is checked too: the evidence mustn't hold what it says it couldn't find.
     graph.add_conditional_edges("summarize", lambda s: "validate" if (
-        s["outcome"] in ("answered", "uncited") or s.get("claimed_not_found")) and get_settings().eval_validation
+        s["outcome"] in ("answered", "uncited") or s.get("claimed_not_found")) and get_settings().eval_validation != "off"
         else END)
     graph.add_conditional_edges("validate", _after_check)
     return graph.compile()

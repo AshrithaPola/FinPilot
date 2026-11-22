@@ -221,8 +221,8 @@ async def test_the_auditor_catches_a_wrong_number_and_the_answer_is_regenerated(
 async def test_the_strategist_catches_advice_and_a_second_failure_is_refused(engine):
     llm, _ = engine
     _afford_plan(llm)
-    llm.answer = ["You can afford it [2]. You should buy VTI with the rest [1].",
-                  "Yes [2], and I recommend buying VTI [1]."]
+    llm.answer = ["You can afford it, with $2,252.02 left [2]. You should buy VTI with the rest [1].",
+                  "Yes, $2,252.02 would be left [2], and I recommend buying VTI [1]."]
     result = await engine_graph.answer(AFFORD, ME)
     assert [v["strategist"]["passed"] for v in result["validation"]] == [False, False]
     assert result["outcome"] == "refused_unverified" and result["citations"] == []
@@ -232,7 +232,7 @@ async def test_the_strategist_catches_advice_and_a_second_failure_is_refused(eng
 async def test_the_gatekeeper_catches_an_answer_to_another_question(engine):
     llm, _ = engine
     _afford_plan(llm)
-    llm.answer = ["Your checking account had $3,452.02 as of 2026-06-30 [1].", GOOD]
+    llm.answer = ["Your checking account had $3,452.02 as of 2026-06-30 [1]; $2,252.02 would be left [2].", GOOD]
     llm.verdict = [{"gatekeeper": FAIL, "auditor": PASS, "strategist": PASS},
                    {"gatekeeper": PASS, "auditor": PASS, "strategist": PASS}]
     result = await engine_graph.answer(AFFORD, ME)
@@ -379,7 +379,7 @@ async def test_a_wrong_doc_type_guess_is_searched_again_across_every_type(engine
         _step("s1", "documents", "search", {"query": "fraud rules memo", "doc_type": "policy"})]}
     llm.answer = "The memo sets the card fraud engine's thresholds [1]."
     result = await engine_graph.answer("What does the fraud rules memo say?", ME)
-    assert store.types == ["policy", None] and result["outcome"] == "answered"
+    assert "policy" in store.types[0] and store.types[1] is None and result["outcome"] == "answered"
     assert "query_rewriter" not in result["llm_calls_by_role"]  # fixed in code, no model call
     assert result["citations"][0]["filename"] == "internal/fraud-rules-memo.md"
 
@@ -513,7 +513,7 @@ async def test_a_fee_why_question_searches_the_fee_schedule_first(engine, monkey
     llm.answer = ("You were charged $15 on April 6, 2026 [1] because the account was overdrawn by more than "
                   "the $50.00 cushion [2].")
     result = await engine_graph.answer("Why was I charged $15 on April 6, 2026?", ME)
-    assert store.types[0] == "fee_schedule" and result["outcome"] == "answered"
+    assert "fee_schedule" in store.types[0] and result["outcome"] == "answered"
     assert result["citations"][1]["filename"] == "fee-schedule-2026.md"
 
 
@@ -534,7 +534,7 @@ def test_a_fee_why_plan_without_a_search_gets_one_in_the_fee_schedule():
 def test_validation_is_on_by_default():
     import config
 
-    assert config.Settings(_env_file=None).eval_validation is True  # the app always validates
+    assert config.Settings(_env_file=None).eval_validation == "full"  # the app always validates in full
 
 
 async def test_with_validation_off_the_answer_skips_the_validators(engine, monkeypatch):
@@ -604,3 +604,94 @@ async def test_the_summarizer_knows_the_records_range_and_a_step_before_it_says_
     assert "the customer's records start on 2025-07-01" in summarizer["user"]  # the step's own note
     assert summarizer["checker"] is False  # the summarizer keeps the model's default thinking
     assert result["outcome"] == "nothing_found"
+
+
+class FiltersRecordingStore:
+    """Records each search's filters; one passage per version of the fee schedule."""
+
+    def __init__(self):
+        self.calls = []
+
+    def scoped(self, principal):
+        return self
+
+    async def search(self, query, filters=None):
+        self.calls.append((filters.doc_type, filters.as_of.isoformat() if filters.as_of else None))
+        name = "fee-schedule-2025.md" if filters.as_of and filters.as_of.isoformat() < "2026-02-01" else "fee-schedule-2026.md"
+        return [_hit("The overdraft fee is $34.00 per item." if "2025" in name else "The overdraft fee is $15.00 per item.",
+                     name, "Fees > 1. Everyday Checking", 5.0, name)]
+
+
+async def test_a_guess_at_a_bank_terms_type_searches_the_whole_family(engine, monkeypatch):
+    llm, _ = engine
+    store = FiltersRecordingStore()
+    monkeypatch.setattr(engine_graph, "get_store", lambda: store)
+    llm.plan = {"intent": "dispute", "out_of_scope": False, "steps": [
+        _step("s1", "documents", "search", {"query": "dispute card charge deadline", "doc_type": "agreement"})]}
+    llm.answer = "The overdraft fee is $15.00 per item [1]."
+    await engine_graph.answer("How many days do I have to dispute a card charge?", ME)
+    [(types, _)] = store.calls
+    assert {"agreement", "policy", "fee_schedule"} <= set(types)  # the dispute policy is a "policy"
+
+
+async def test_a_past_date_also_searches_todays_version(engine, monkeypatch):
+    llm, _ = engine
+    store = FiltersRecordingStore()
+    monkeypatch.setattr(engine_graph, "get_store", lambda: store)
+    llm.plan = {"intent": "fees", "out_of_scope": False, "steps": [
+        _step("s1", "documents", "search", {"query": "overdraft fee", "as_of": "2026-01-01"})]}
+    llm.answer = "In January the fee was $34.00 [1]; today it's $15.00 [2]."
+    result = await engine_graph.answer("Why were my overdraft fees $34 in January but only $15 now?", ME)
+    assert [as_of for _, as_of in store.calls] == ["2026-01-01", "2026-06-30"]
+    assert {c["filename"] for c in result["citations"]} == {"fee-schedule-2025.md", "fee-schedule-2026.md"}
+    assert "searched the version in force on 2026-01-01 and today's" in result["plan"]["steps"][0]["note"]
+    [summarizer] = [c for c in llm.chat_calls if c["role"] == "summarizer"]
+    assert "two versions of a document" in summarizer["system"]
+
+
+async def test_an_answer_that_drops_the_calculated_result_is_rewritten(engine):
+    llm, _ = engine
+    _afford_plan(llm)  # get_balance, then afford: $2,252.02 would be left
+    llm.answer = ["Yes, checking has $3,452.02 as of 2026-06-30 [1], so you can afford it [2].", GOOD]
+    result = await engine_graph.answer(AFFORD, ME)
+    first = result["validation"][0]["auditor"]
+    assert not first["passed"] and first["by"] == "code" and "$2,252.02" in first["reason"]
+    assert result["answer"] == GOOD and result["outcome"] == "answered"
+
+
+def test_an_intermediate_total_needs_no_mention_but_the_final_result_does():
+    from engine.checks import missing_calculation
+    from engine.plan import Step
+
+    def step(sid, tool, args, result):
+        s = Step(sid, "calculation", tool, args, "")
+        s.status, s.result = "done", result
+        return s
+
+    steps = [step("s3", "total", {"amounts_cents": "$s1[*].amount_cents"}, {"total_cents": -54940}),
+             step("s4", "total", {"amounts_cents": "$s2[*].amount_cents"}, {"total_cents": -25998}),
+             step("s5", "difference", {"a_cents": "$s3.total_cents", "b_cents": "$s4.total_cents"},
+                  {"difference_cents": -28942, "absolute_cents": 28942})]
+    assert missing_calculation("You spent $289.42 more in April [5].", steps) is None
+    assert "$289.42" in missing_calculation("April was higher [3][4].", steps)
+
+
+def test_the_why_check_names_the_passages_to_cite():
+    sources = ('[1] Result of list_fees:\n[]\n\n[2] Document fees.md, section "Fees":\nA late fee applies.\n\n'
+               '[3] Document card.md, section "5.2":\nNever more than the minimum payment.')
+    reason = code_checks("Why do I keep getting late fees?", "You missed payments [1].", sources, None)["gatekeeper"]
+    assert "the document passages are [2], [3]" in reason
+
+
+async def test_code_only_validation_skips_the_models_validator(engine, monkeypatch):
+    import config
+
+    llm, _ = engine
+    _afford_plan(llm)
+    llm.answer = GOOD
+    monkeypatch.setenv("EVAL_VALIDATION", "code")
+    config.get_settings.cache_clear()
+    result = await engine_graph.answer(AFFORD, ME)
+    assert result["llm_calls_by_role"] == {"planner": 1, "summarizer": 1}  # no validator call
+    assert all(v["by"] == "code" and v["passed"] for v in result["validation"][0].values())
+    assert config.Settings(_env_file=None, eval_validation="false").eval_validation == "off"  # the old spelling

@@ -94,12 +94,13 @@ class Filters:
     only versions in force today: effective on or before `as_of` and not
     superseded by then (a document without dates is always in force)."""
     department: str | None = None
-    doc_type: str | None = None
+    doc_type: str | tuple[str, ...] | None = None  # one type, or any of several
     as_of: date | None = None   # None: today
     all_versions: bool = False  # True: superseded and not-yet-effective versions too
 
     def params(self) -> dict:
-        return {"department": self.department, "doc_type": self.doc_type,
+        types = (self.doc_type,) if isinstance(self.doc_type, str) else self.doc_type
+        return {"department": self.department, "doc_types": list(types) if types else None,
                 "as_of": None if self.all_versions else (self.as_of or date.today())}
 
 
@@ -206,12 +207,12 @@ def _joined(window: list[dict]) -> str:
 # as a subquery on documents, which RLS also covers.
 _WHERE = """
     (CAST(:doc_ids AS text[]) IS NULL OR doc_id = ANY(CAST(:doc_ids AS text[])))
-    AND (CAST(:department AS text) IS NULL AND CAST(:doc_type AS text) IS NULL
+    AND (CAST(:department AS text) IS NULL AND CAST(:doc_types AS text[]) IS NULL
          AND CAST(:as_of AS date) IS NULL
          OR doc_id IN (
             SELECT d.doc_id FROM documents d
             WHERE (CAST(:department AS text) IS NULL OR d.department = CAST(:department AS text))
-              AND (CAST(:doc_type AS text) IS NULL OR d.doc_type = CAST(:doc_type AS text))
+              AND (CAST(:doc_types AS text[]) IS NULL OR d.doc_type = ANY(CAST(:doc_types AS text[])))
               AND (CAST(:as_of AS date) IS NULL
                    OR (coalesce(d.effective_date <= CAST(:as_of AS date), true)
                        AND coalesce(d.superseded_on > CAST(:as_of AS date), true)))))

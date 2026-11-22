@@ -1352,6 +1352,23 @@ Where they fit, and nothing else moved:
     each argument's allowed values from the tool's schema, and fee types
     accept common aliases ("late", "late fee", "maintenance").
   - *Subtraction:* a difference tool (a minus b, and its size).
+- **After the clean run** (commit 7): the planner's own filters narrowed
+  searches into the wrong place. `as_of: 2026-01-01` saw only the 2025 fee
+  schedule (b2-overdraft-34-to-15), `doc_type: agreement` missed the
+  dispute policy (b1-dispute-days): together the recall drop, 0.92 to
+  0.77. `doc_type: fee_schedule` for a card late fee left out the
+  cardmember agreement, the only text that explains a $25 fee (never more
+  than the minimum payment, which is at least $25), and two drafts that
+  explained from data alone failed the "why" check (a false refusal).
+  Fixes: a guess at one bank-terms type (fee schedule, policy, agreement,
+  rate table, product comparison) searches them all; a past as_of also
+  searches today's version, and the summarizer says what changed; the
+  "why" retry names the passages to cite; an answer must state its final
+  calculation's result (code check, regenerated otherwise); list_fees
+  gives each transaction-caused fee the balance right after that
+  transaction (checked on Neon: every demo overdraft fee is past the
+  cushion in force); EVAL_VALIDATION=code (eval only) runs the code checks
+  without the model's validator.
 
 ## Phase 10 notes (from 2026-11-14)
 

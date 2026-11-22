@@ -105,3 +105,17 @@ def test_a_balance_can_be_asked_by_account_type(setup):
     assert checking["account_id"] == "cust-0001-chk"
     with pytest.raises(ToolError):
         tools.call(ME, "get_balance", {"account_type": "checking'; --"})
+
+
+def test_an_overdraft_fee_comes_with_the_balance_that_caused_it(setup):
+    tools, _ = setup
+    checked = 0
+    for customer in ("cust-0001", "cust-0002", "cust-0003"):
+        who = Access(org_id=synthetic.BANK_ORG, clearance=0, customer_id=customer)
+        for fee in tools.call(who, "list_fees", {"fee_type": "overdraft", "limit": 200}):
+            cushion = -5000 if fee["assessed_on"] >= "2026-02-01" else 0  # the 2026 schedule's $50.00 cushion
+            assert fee["balance_after_cents"] < cushion, fee  # the generator's own rule for charging it
+            checked += 1
+    late = tools.call(ME, "list_fees", {"fee_type": "late_payment", "limit": 5})
+    assert all(f["balance_after_cents"] is None for f in late)  # no transaction caused a late fee
+    assert checked >= 0

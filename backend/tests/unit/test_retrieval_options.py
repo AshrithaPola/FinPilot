@@ -22,7 +22,9 @@ def test_the_question_leg_adds_to_the_fused_score():
 
 
 def test_filters_default_to_the_versions_in_force_today():
-    assert Filters().params() == {"department": None, "doc_type": None, "as_of": date.today()}
+    assert Filters().params() == {"department": None, "doc_types": None, "as_of": date.today()}
+    assert Filters(doc_type="policy").params()["doc_types"] == ["policy"]
+    assert Filters(doc_type=("policy", "agreement")).params()["doc_types"] == ["policy", "agreement"]
     assert Filters(as_of=date(2025, 6, 1)).params()["as_of"] == date(2025, 6, 1)
     assert Filters(all_versions=True).params()["as_of"] is None
 

@@ -21,6 +21,7 @@ advice or money-movement phrasing and no other customer's id may appear. A
 code failure skips the LLM call; the graph regenerates once with the reason,
 then refuses.
 """
+import json
 import re
 from decimal import Decimal, InvalidOperation
 
@@ -158,8 +159,10 @@ def code_checks(question: str, answer: str, sources: str, customer_id: str | Non
         failures["gatekeeper"] = (f"the question asks about the {target}, but no evidence the answer cites is "
                                   "about it: answer from that, or say it couldn't be found")
     elif _WHY.search(question) and passages and not passages & cited:
+        numbers = ", ".join(f"[{n}]" for n in sorted(passages, key=int))
         failures["gatekeeper"] = ("it doesn't say why: explain the rule from the bank's documents that applies "
-                                  "(when the fee or decision applies and when it doesn't), citing that passage")
+                                  "(when the fee or decision applies and when it doesn't), citing the passage that "
+                                  f"states it (the document passages are {numbers})")
     advice = _ADVICE.search(answer)
     others = {c for c in _CUSTOMER.findall(answer) if c != customer_id}
     if advice:
@@ -167,6 +170,25 @@ def code_checks(question: str, answer: str, sources: str, customer_id: str | Non
     elif others:
         failures["strategist"] = "it mentions another customer"
     return failures
+
+
+def missing_calculation(answer: str, steps) -> str | None:
+    """A calculation the plan ran for the answer (one no later step uses) whose result
+    the answer doesn't state: why it's checked in code, as the model can drop it."""
+    from engine.executor import dollars
+
+    used = " ".join(json.dumps(s.arguments) for s in steps)
+    for s in steps:
+        if s.agent != "calculation" or s.status != "done" or not isinstance(s.result, dict):
+            continue
+        if f'"${s.id}' in used or f"${s.id}." in used or f"${s.id}[" in used:
+            continue  # an intermediate total, feeding another calculation
+        values = [v for k, v in s.result.items() if k.endswith("_cents") and isinstance(v, int)]
+        forms = {f for v in values for f in (dollars(abs(v)), dollars(abs(v)).removesuffix(".00"))}
+        if values and not any(f in answer for f in forms):
+            return (f"it leaves out the calculated result ({s.tool}: "
+                    f"{', '.join(sorted({dollars(abs(v)) for v in values}))}): state it")
+    return None
 
 
 def verdict_from(reply: dict) -> dict:

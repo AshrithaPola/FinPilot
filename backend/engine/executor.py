@@ -42,6 +42,7 @@ _PART = re.compile(r"\[(\d+|\*)\]|\.([a-z_]+)")
 MAX_ROWS_SHOWN = 25  # rows of one tool result shown to the summarizer
 DOC_TYPES = {"fee_schedule", "policy", "agreement", "rate_table", "product_comparison", "api_spec",
              "sec_10k", "fund_prospectus", "consumer_guide", "internal_memo"}
+BANK_TERMS = ("fee_schedule", "policy", "agreement", "rate_table", "product_comparison")  # one family to search
 # Market tools and the argument that dates them: missing means "today", and
 # nothing later than today is ever read (the demo's world ends on DEMO_TODAY).
 AS_OF_TODAY = {"get_price": "as_of", "get_rate": "as_of", "get_company_financials": "as_of",
@@ -311,9 +312,20 @@ class Executor:
             as_of = date.fromisoformat(arguments["as_of"]) if arguments.get("as_of") else None
         except (TypeError, ValueError):
             raise StepError("as_of must be a date, YYYY-MM-DD") from None
-        filters = Filters(doc_type=doc_type, as_of=as_of or self._today)
+        # The bank's own terms are spread over schedules, policies and agreements (a card's
+        # late fee is in the fee schedule; the minimum payment that caps it, in the cardmember
+        # agreement): a guess at one of those types searches all of them.
+        type_filter = BANK_TERMS if doc_type in BANK_TERMS else doc_type
+        filters = Filters(doc_type=type_filter, as_of=as_of or self._today)
         store = self._store.scoped(principal)
         hits = await self._traced_search(store, query, filters)
+        if as_of and self._today and as_of < self._today:
+            # A past date finds the version in force then; today's version is searched too,
+            # so the answer can say what changed since.
+            current = await self._traced_search(store, query, Filters(doc_type=type_filter, as_of=self._today))
+            seen = {h.chunk_id for h in hits}
+            hits = hits + [h for h in current if h.chunk_id not in seen]
+            step.note = f"searched the version in force on {as_of.isoformat()} and today's"
         if doc_type and weak(query, hits):
             # A wrong type guess (a memo searched as a "policy") hides the right
             # document entirely: search every type once, with no model call.
