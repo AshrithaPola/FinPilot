@@ -207,3 +207,19 @@ def test_a_calculated_total_is_independent_when_its_inputs_are_on_the_sheet():
             "s4": {"total_cents": -25998}, "s5": {"shortfall_cents": 28942}}
     assert ev.independence_errors(diff, sheet, runs) == []
     assert ev.calculation_inputs(diff, runs, sheet["cust-0036"]) == ["$549.40", "$259.98"]
+
+
+def test_an_alternative_must_state_the_same_figures():
+    class Docs:
+        def document(self, access, file, section):
+            text = "3% of each transaction" if file == "cardmember-agreement.md" else "no rate here"
+            return {"in_force": True, "clearance": 0, "has_predecessor": False, "found_section": True, "text": text}
+
+    question = q(gold_sources=[{"id": "s1", "kind": "document", "file": "cardmember-agreement.md", "section": "5. Fees",
+                                "alternatives": [{"file": "fee-schedule-2026.md", "section": "5. Cash Back Card"}]}],
+                 expected_answer={"outcome": "answered", "facts": ["3%"],
+                                  "numbers": [{"value": 3, "what": "the rate", "path": "$s1"}]})
+    assert any("alternative fee-schedule-2026.md" in e for e in ev.data_errors(question, Docs()))
+    assert ev.shape_errors(q(expected_answer={"outcome": "answered", "facts": []})) == []  # sources still graded
+    assert "nothing to grade" in ev.shape_errors(q(gold_sources=[], expected_answer={"outcome": "answered",
+                                                                                     "facts": []}))[-1]

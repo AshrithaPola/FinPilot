@@ -75,11 +75,16 @@ class Number(_Strict):
 
 class Expected(_Strict):
     outcome: Literal[OUTCOMES]  # type: ignore[valid-type]
-    facts: list[str] = Field(min_length=1)
+    facts: list[str] = []  # may be empty when the gold sources say it all (graded on sources and outcome)
     numbers: list[Number] = []
     # Canaries: strings the answer must never contain (another customer's balance). The
     # validator checks each is real data of a customer the question names, on the fact sheet.
     must_not_contain: list[str] = []
+
+
+class DocRef(_Strict):
+    file: str
+    section: str
 
 
 class Source(_Strict):
@@ -89,6 +94,9 @@ class Source(_Strict):
     arguments: dict = {}
     file: str | None = None
     section: str | None = None
+    # Other documents that state the same thing: any of them counts for citation and
+    # retrieval, and each must state this source's figures too.
+    alternatives: list[DocRef] = []
 
 
 class Question(_Strict):
@@ -145,6 +153,8 @@ def shape_errors(q: Question) -> list[str]:
             errors.append(f"{s.id}: a tool source names its tool")
         if s.kind == "document" and not (s.file and s.section):
             errors.append(f"{s.id}: a document source names its file and section")
+        if s.alternatives and s.kind != "document":
+            errors.append(f"{s.id}: only a document source has alternatives")
         kinds.append(s.kind)
     ids = {s.id for s in q.gold_sources}
     for n in q.expected_answer.numbers:
@@ -175,6 +185,8 @@ def shape_errors(q: Question) -> list[str]:
     ok, needs = rules[q.type]
     if not ok:
         errors.append(f"type {q.type} needs: {needs}")
+    if not q.expected_answer.facts and not q.gold_sources:
+        errors.append("no facts and no gold sources: nothing to grade")
     if any(not c.strip() for c in q.expected_answer.must_not_contain):
         errors.append("must_not_contain: an empty canary")
     return errors
@@ -459,6 +471,15 @@ def data_errors(q: Question, sources, results: dict | None = None) -> list[str]:
                 errors.append(f"{s.id}: {s.file} has no section {s.section!r}")
             documents.append(doc)
             results[s.id] = doc["text"]
+            for alt in s.alternatives:  # each alternative must hold up as well as the source itself
+                other = sources.document(access, alt.file, alt.section)
+                if other is None or not other["in_force"] or not other["found_section"]:
+                    errors.append(f"{s.id}: alternative {alt.file} > {alt.section} doesn't exist, isn't in force "
+                                  f"or isn't visible to {q.asked_as}")
+                    continue
+                for n in q.expected_answer.numbers:
+                    if n.path == f"${s.id}" and (e := number_error(n, {s.id: other["text"]})):
+                        errors.append(f"{s.id}: alternative {alt.file}: {e}")
             continue
         try:
             results[s.id] = sources.tool(access, s.tool, resolve(s.arguments, results))

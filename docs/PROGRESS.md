@@ -1254,7 +1254,8 @@ Where they fit, and nothing else moved:
 |---|---|---|
 | 1 | b3f3cd1 | The eval set's format, three worked examples, its validator and the writing guide |
 | 2 | e2b0238 | The demo customers' fact sheet (plain SQL as the owner) and independent questions |
-| 3 | this commit | The author's 30 questions (33 with the examples), validated on Neon; canaries; independent totals |
+| 3 | 0485190 | The author's 30 questions (33 with the examples), validated on Neon; canaries; independent totals |
+| 4 | this commit | The eval runner, the baseline run (re-scored after the review's corrections) and the eval-only validation switch |
 
 - **The set:** `backend/eval/questions.jsonl`, one JSON question per line:
   id, question, asked_as (a demo customer or staff), type (11 types, from
@@ -1312,6 +1313,23 @@ Where they fit, and nothing else moved:
   May" needs a subtraction the calculator doesn't have (the gold source
   uses afford's shortfall). The first eval run records them; fixes and a
   re-run follow.
+- **The runner** (`python -m eval.run`): each question through the real
+  engine on Neon as its asker; a LangChain callback (Langfuse's hook)
+  captures each search's ranked hits and the evidence the summarizer saw,
+  so nothing in the app changes. Scores: outcome, exact numbers, facts and
+  faithfulness by a judge (`gemini-3.1-flash-lite`, not the generator),
+  gold citations, recall@5 and MRR on the app's own searches, canary
+  leaks, latency, calls and cost. A timeout or quota error is retried once
+  (both attempts kept); a wrong answer never is. `EVAL_VALIDATION=false`
+  (eval only, default on, not in the API or UI) skips the validators.
+- **Baseline** (`backend/eval/runs/20261122T001150Z-baseline/`: hybrid +
+  rerank, validation on, commit 0485190), re-scored with `python -m
+  eval.rescore` after the review's eval-set corrections (NOTES.md: three
+  corrections, one judge error): over all 33, the 2 questions that timed
+  out twice counted as failures, outcome 78.8%, numbers 66.7%, facts
+  76.6%; over the 31 answered, gold cited 81.4%, recall@5 0.92, MRR 0.71,
+  faithful 95.8%, canary leaks 0, false refusals 8.3%, 12.3 s and 3.1
+  model calls a question, about $0.09 for the run.
 
 ## Phase 10 notes (from 2026-11-14)
 

@@ -529,3 +529,24 @@ def test_a_fee_why_plan_without_a_search_gets_one_in_the_fee_schedule():
         _step("s1", "documents", "search", {"query": "fraud rules memo"})]})
     assert prefer_fee_schedule(other, "What does the fraud rules memo say?").steps[0].arguments == {
         "query": "fraud rules memo"}  # not a fee question: untouched
+
+
+def test_validation_is_on_by_default():
+    import config
+
+    assert config.Settings(_env_file=None).eval_validation is True  # the app always validates
+
+
+async def test_with_validation_off_the_answer_skips_the_validators(engine, monkeypatch):
+    import config
+
+    llm, _ = engine
+    _afford_plan(llm)
+    llm.answer = GOOD
+    on = await engine_graph.answer(AFFORD, ME)
+    assert on["llm_calls_by_role"] == {"planner": 1, "summarizer": 1, "validator": 1}
+    monkeypatch.setenv("EVAL_VALIDATION", "false")
+    config.get_settings.cache_clear()
+    off = await engine_graph.answer(AFFORD, ME)
+    assert off["llm_calls_by_role"] == {"planner": 1, "summarizer": 1} and off["validation"] == []
+    assert off["outcome"] == "answered"

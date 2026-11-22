@@ -87,6 +87,10 @@ class Settings(BaseSettings):
     langfuse_secret_key: str | None = None
     langfuse_base_url: str | None = Field(default=None, validation_alias=AliasChoices(
         "LANGFUSE_BASE_URL", "LANGFUSE_HOST", "langfuse_base_url"))
+    # Eval only (EVAL_VALIDATION=false): skip the validators, to measure what they
+    # add. Not in the API or the UI; an app always runs them.
+    eval_validation: bool = True
+
     # Salt for the one-way hashes that stand in for user, org and customer ids
     # in Langfuse (the same user groups together, and can't be read back).
     # Unset: those ids are masked outright.

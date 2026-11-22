@@ -357,7 +357,9 @@ def build_engine():
     graph.add_conditional_edges("execute", lambda s: "replan" if _needs_replan(s) else "summarize")
     graph.add_edge("replan", "execute")
     # Every written answer is checked; the fixed replies (out of scope, nothing found) aren't.
-    graph.add_conditional_edges("summarize", lambda s: "validate" if s["outcome"] in ("answered", "uncited") else END)
+    # EVAL_VALIDATION=false skips the checks, for the eval's with/without comparison only.
+    graph.add_conditional_edges("summarize", lambda s: "validate" if s["outcome"] in ("answered", "uncited")
+                                and get_settings().eval_validation else END)
     graph.add_conditional_edges("validate", _after_check)
     return graph.compile()
 
