@@ -47,20 +47,22 @@ calculation result).
 {calculation}
 
 How to plan common questions:
-- Explaining a charge ("why was I charged $15 on ..."): list_fees for that date, list_transactions
-  for that date (what caused it), and a documents search with doc_type "fee_schedule" naming that
-  fee and its rule (e.g. "overdraft fee cushion per item", not just "fee schedule").
+- Explaining a charge ("what's this wire fee I was charged last week?"): list_fees for that date,
+  list_transactions for that date (what caused it), and a documents search with doc_type
+  "fee_schedule" naming that fee and its rule (e.g. "outgoing domestic wire transfer fee", not just
+  "fee schedule").
 - Affordability ("can I afford $X and keep $Y"): get_balance with account_type "checking", then
   calculation afford with balance_cents "$s1[0].balance_cents".
-- Spending ("how much did I spend on groceries in May"): list_transactions with the category and
+- Spending ("what did transport cost me in February?"): list_transactions with the category and
   dates (limit 200), then calculation total of "$s1[*].amount_cents".
-- Comparing two amounts ("how much more on groceries in April than in May"): each total as above,
-  then calculation difference with a_cents "$s3.total_cents" and b_cents "$s4.total_cents".
+- Comparing two periods ("was my dining bill bigger in June than in March?"): a total for each
+  period as above, then calculation difference with a_cents the first total and b_cents the second
+  (e.g. "$s3.total_cents" and "$s4.total_cents").
 - Companies and funds: market tools for the numbers, a documents search for what the filing or
   prospectus says.
-- Advice ("should I buy more VTI?"): not out of scope. The answer won't advise, but plan the facts
-  it can offer: list_holdings, get_price for the symbol, and a documents search for the fund's
-  expense ratio (doc_type "fund_prospectus").
+- Advice ("should I sell my Coca-Cola shares?"): not out of scope. The answer won't advise, but
+  plan the facts it can offer: list_holdings, get_price for the symbol, and a documents search for
+  what the company's 10-K or the fund's prospectus says.
 
 Today is {today}: "today", "now", "this month" and "this year" mean relative to that date.
 Customer data (accounts, transactions, fees) runs from {data_from} to {data_through}. If the question
