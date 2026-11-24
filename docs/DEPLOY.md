@@ -10,12 +10,27 @@ PROJECT_ID=my-project scripts/gcp_deploy.sh --apply    # creates the services
 PROJECT_ID=my-project scripts/gcp_teardown.sh --apply  # removes everything deploy made
 ```
 
+Before `--apply`: run `gcloud auth login` (the saved sign-in on the dev
+machine had expired on 2026-11-24), and put `DEPLOY_GEMINI_API_KEY` in `.env`.
+
 What the deploy script does:
 
+- **Checks first:** it stops before creating anything if a value it needs is
+  missing from `.env`, or if `DEPLOY_GEMINI_API_KEY` is the same as the eval
+  key `GEMINI_API_KEY`.
 - **Billing:** it stops if the project has no billing; it never turns billing on.
 - **Secrets:** six values from `.env` go into Secret Manager (the Neon app URL,
-  Gemini key, observability salt, Langfuse keys, Firebase key file), readable
-  only by a dedicated service account.
+  the deployed app's own Gemini key `DEPLOY_GEMINI_API_KEY`, observability salt,
+  Langfuse keys, Firebase key file), readable only by a dedicated service
+  account. Values go to gcloud through a pipe, never a temporary file.
+- **Re-runs are safe:** a resource that already exists is kept, as is a budget
+  with the same name. A secret gets a new version only when its value changed,
+  so re-runs stay within the free 6 versions. The service account's
+  secret-access bindings are retried for up to a minute while a new account
+  becomes visible to IAM.
+- **The backend URL is wired automatically:** after deploying the backend, the
+  script reads its real `run.app` URL and passes it to the frontend as
+  `BACKEND_URL`.
 - **Images:** built by Cloud Build, so no local Docker is needed. CI builds
   both images on every push (never pushed anywhere), so a broken Dockerfile or
   nginx template shows up before a deploy.
@@ -32,8 +47,10 @@ What the deploy script does:
 
 Two steps stay manual:
 
-- Add the frontend's `run.app` host to Firebase Authentication's authorized
-  domains.
+- In the **Firebase project `documind-29040`** (the one `FIREBASE_PROJECT_ID`
+  names, not the Cloud Run project), add the frontend's `run.app` host under
+  Authentication > Settings > Authorized domains. The script prints the exact
+  host at the end. Sign-in fails on that host until then.
 - Migrations: Neon is already migrated, and the owner URL never reaches Cloud Run.
 
 ## Monthly cost estimate
