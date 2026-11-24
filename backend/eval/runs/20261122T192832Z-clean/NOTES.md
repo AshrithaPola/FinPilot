@@ -11,3 +11,14 @@ ed52758: the planner's catalog shows each argument's allowed values (fee types, 
 ## Reading the comparison
 
 fee-why-0036, groceries-may-0036, b2-groceries-apr-vs-may and b1-advice-schd were mirrored by planner examples in the baseline (and in the partial contaminated run), not in this one: compare them on their own.
+
+## Eval-set corrections
+
+- `b1-cushion-paraphrase`: Correction (2026-11-22): the 2026 overdraft policy states the same $50.00 cushion and $15.00 fee, so either document counts.
+- `b1-apple-supply-chain`: Correction (2026-11-22): 'From Apple's Form 10-K for the fiscal year ended September 27, 2025' moved from facts to the gold sources only, like b3-msft-risks; it names where the answer comes from.
+- `b3-msft-risks`: Correction (2026-11-22): 'The FY2025 10-K, Item 1A' moved from facts to the gold source only; it names where the answer comes from, not a fact the answer must state.
+- `b3-foreign-fee-rate`: Correction (2026-11-22): the fee schedule's Cash Back Card section states the same 3%, so either document counts.
+
+## Judge errors
+
+None.

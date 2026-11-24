@@ -1589,19 +1589,14 @@
       "trace_id": "0db2e18f-5597-480f-bd52-bf5a40dcb094",
       "facts": [
         {
-          "fact": "From Apple's Form 10-K for the fiscal year ended September 27, 2025 (the latest filed by the demo date).",
-          "covered": true,
-          "reason": "The answer references Apple's annual report."
-        },
-        {
           "fact": "Dependence on outsourcing partners for manufacturing and logistics, many outside the U.S.",
           "covered": true,
-          "reason": "The answer states that a majority of supplier facilities and manufacturing partners are located outside the U.S."
+          "reason": "The answer mentions that a majority of supplier facilities and manufacturing partners are located outside the U.S. and that these arrangements reduce direct control."
         },
         {
           "fact": "Some components come from single or limited sources; shortages and commodity price swings.",
           "covered": true,
-          "reason": "The answer mentions components obtained from single or limited sources and the risks of shortages and price increases."
+          "reason": "The answer mentions sourcing from single or limited sources and the risks of supply shortages and price increases."
         },
         {
           "fact": "Trade restrictions and tariffs can raise costs or limit components and raw materials.",
@@ -1611,7 +1606,7 @@
         {
           "fact": "Natural disasters and other interruptions at suppliers' facilities.",
           "covered": true,
-          "reason": "The answer includes natural disasters as a vulnerability."
+          "reason": "The answer explicitly mentions natural disasters as a vulnerability for operations and supply chains."
         }
       ],
       "facts_covered": 1.0,
@@ -1638,7 +1633,8 @@
       },
       "wall_s": 8.38,
       "failed_attempts": [],
-      "retried": false
+      "retried": false,
+      "facts_rejudged": true
     },
     {
       "id": "b1-advice-schd",
