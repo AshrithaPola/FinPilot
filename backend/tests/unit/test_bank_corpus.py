@@ -23,7 +23,7 @@ def manifest():
 def test_the_manifest_lists_every_document_and_nothing_else(manifest):
     on_disk = {p.relative_to(BANK).as_posix() for p in BANK.rglob("*")
                if p.is_file() and p.name not in NOT_DOCUMENTS
-               and not {"tools", "receipts", "sources"} & set(p.parts)}  # receipts: customer data; sources: what a tool builds a document from
+               and not {"tools", "receipts", "sources", "redteam"} & set(p.parts)}  # receipts: customer data; sources: what a tool builds a document from; redteam: planted-instruction documents, never in the corpus
     assert {d["file"] for d in manifest["documents"]} == on_disk
 
 

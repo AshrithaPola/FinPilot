@@ -12,6 +12,7 @@ effective date, clearance) comes from the manifest, not from the text.
 import argparse
 import asyncio
 import hashlib
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,6 +24,8 @@ from ingestion.noise import strip_boilerplate
 from ingestion.parse import parse_file
 
 BANK = Path(__file__).resolve().parents[2] / "data" / "bank"
+# Planted-instruction documents (Phase 11): loaded only on the Neon branch "redteam".
+REDTEAM = BANK / "redteam"
 
 
 @dataclass
@@ -72,7 +75,7 @@ async def load(store, docs: list[CorpusDocument], *, llm=None, model: str = "",
     return {"documents": len(docs), "chunks": sum(len(d.chunks) for d in docs), "metadata_calls": calls}
 
 
-def _load_command(no_metadata: bool) -> None:
+def _load_command(no_metadata: bool, root: Path = BANK) -> None:
     from bank.synthetic import BANK_ORG
     from config import get_settings
     from db.access import Access
@@ -88,11 +91,16 @@ def _load_command(no_metadata: bool) -> None:
         Access(org_id=BANK_ORG, clearance=2, role="admin"))
     cache = load_cache()
     try:
-        counts = asyncio.run(load(store, load_corpus(settings), llm=None if no_metadata else get_llm(),
+        counts = asyncio.run(load(store, load_corpus(settings, root), llm=None if no_metadata else get_llm(),
                                   model=settings.grading_model, cache=cache))
     finally:
         save_cache(cache)  # keep what was paid for, even if a later step failed
     print(", ".join(f"{k} {v}" for k, v in counts.items()))
+
+
+def redteam_target() -> bool:
+    """Is this the Neon branch "redteam"? scripts/neon.py --redteam says so."""
+    return os.environ.get("FINPILOT_NEON_BRANCH") == "redteam"
 
 
 def main() -> None:
@@ -101,9 +109,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Show or load the FinPilot Bank corpus.")
     parser.add_argument("command", nargs="?", choices=["load"])
     parser.add_argument("--no-metadata", action="store_true", help="skip the LLM metadata calls")
+    parser.add_argument("--redteam", action="store_true",
+                        help="the red-team documents, only via scripts/neon.py --redteam")
     args = parser.parse_args()
     if args.command == "load":
-        _load_command(args.no_metadata)
+        if args.redteam and not redteam_target():
+            raise SystemExit("Red-team documents load only into the Neon branch \"redteam\": "
+                             "run through scripts/neon.py --redteam.")
+        _load_command(args.no_metadata, REDTEAM if args.redteam else BANK)
         return
     docs = load_corpus(get_settings())
     print(f"{'document':42} {'chunks':>6} {'tokens':>9} {'noise':>6}")

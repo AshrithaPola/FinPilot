@@ -17,7 +17,10 @@ databases. Checks:
   - the same customer (clearance 0) sees no row above clearance 0 in any
     table with a clearance column (chunks, documents, doc_tables,
     doc_table_rows) and no staff canary, while staff (clearance 2) does
-    see clearance-2 rows: the check isn't passing on an empty database.
+    see clearance-2 rows: the check isn't passing on an empty database;
+  - no red-team document (data/bank/redteam/, by file name or planted
+    canary) anywhere, except on the Neon branch "redteam"
+    (FINPILOT_NEON_BRANCH=redteam, set by scripts/neon.py --redteam).
 
 The tables are read from the catalog, so tables added later are covered.
 """
@@ -35,6 +38,7 @@ from config import sqlalchemy_url  # noqa: E402
 from db.access import Access, set_access  # noqa: E402
 
 CANARY = "%FINPILOT-CANARY-%"
+PLANTED = "%RT-PLANT-%"  # the planted instructions' canaries
 
 
 # The sign-in directory: no RLS by design (the app role can only read it).
@@ -60,6 +64,23 @@ def _tables(conn) -> tuple[dict[str, set[str]], list[str]]:
     problems = [f"{t}: row-level security is off" if not flags[t][0] else f"{t}: row-level security not forced"
                 for t in sorted(protected) if not all(flags[t])]
     return protected, problems
+
+
+def redteam_target() -> bool:
+    return os.environ.get("FINPILOT_NEON_BRANCH") == "redteam"
+
+
+def redteam_problems(conn) -> list[str]:
+    """Red-team documents in this database, seen as staff (clearance 2): by the
+    red-team manifest's file names, or a chunk holding a planted canary."""
+    from bank.corpus import REDTEAM
+    import yaml
+
+    files = [d["file"] for d in yaml.safe_load((REDTEAM / "manifest.yaml").read_text(encoding="utf-8"))["documents"]]
+    named = conn.execute(sa.text("SELECT filename FROM documents WHERE filename = ANY(:f)"), {"f": files}).scalars().all()
+    planted = conn.execute(sa.text("SELECT count(*) FROM chunks WHERE text LIKE :p"), {"p": PLANTED}).scalar()
+    return ([f"red-team document {f} is loaded here (only the Neon branch \"redteam\" may hold it)" for f in named]
+            + ([f"{planted} chunks hold a planted red-team instruction"] if planted else []))
 
 
 def check(url: str, customer_ids: list[str]) -> list[str]:
@@ -92,6 +113,8 @@ def check(url: str, customer_ids: list[str]) -> list[str]:
         with engine.begin() as conn:
             set_access(conn, Access(org_id=BANK_ORG, clearance=2, role="viewer"))
             staff = conn.execute(sa.text("SELECT count(*) FROM chunks WHERE clearance = 2")).scalar()
+            if not redteam_target():
+                problems += redteam_problems(conn)
         if not staff:
             problems.append("staff see no clearance-2 chunks: load the corpus first, or the "
                             "clearance check proves nothing")

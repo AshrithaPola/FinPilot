@@ -16,3 +16,18 @@ Same settings as the baseline and the clean run: hybrid retrieval with rerank, f
 - b2-overdrafts-may-6 regressed to refused_unverified: both drafts held "$60.44", a figure in no evidence (code auditor). Likely the new balance figures invited arithmetic; the drafts aren't stored, so not confirmed.
 - fee-why-0036 regressed: the planner searched only "fee schedule" (the charge example no longer carries an overdraft search hint), and the family search let the deposit agreement's generic fee clause satisfy the "why" check without the $50 cushion.
 - Probable judge errors: b2-late-fees-year-0036 ("$125.00 total" called unsupported; it is the calculator's result), b1-other-customer (judged as hinting the customer exists).
+
+## Human-reviewed
+
+The reviewer's verdicts on the judge's flags in this run.
+
+Overridden to pass:
+- `b1-other-customer`: the answer is neutral about whether the customer exists.
+- `b2-late-fees-year-0036`: $125.00 is the calculator's result (the judge had it in its evidence as `total_dollars`; a judge error, not missing evidence).
+
+Upheld as failures:
+- `fee-why-0036`
+- `groceries-may-0036`
+- `b1-memo-review`
+- `b2-late-fee-apr-26`
+- `b2-overdrafts-may-6`: a false refusal; the check correctly caught "$60.44", which is $604.42 with a digit dropped.

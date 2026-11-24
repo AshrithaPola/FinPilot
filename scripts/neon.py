@@ -5,6 +5,8 @@
     backend/.venv/Scripts/python scripts/neon.py serve              # the API on :8000, as finpilot_app
     backend/.venv/Scripts/python scripts/neon.py --branch setup     # the Neon branch
     backend/.venv/Scripts/python scripts/neon.py --branch run -- python -m eval.branch_experiment run
+    backend/.venv/Scripts/python scripts/neon.py --redteam setup    # the Neon branch "redteam" (Phase 11)
+    backend/.venv/Scripts/python scripts/neon.py --redteam run -- python -m bank.corpus load --redteam
 
 Reads the repo-root .env: NEON_MIGRATION_DATABASE_URL (the direct owner URL) and
 NEON_POOLED_DATABASE_URL (the pooled host). `setup` first writes
@@ -18,6 +20,10 @@ command in backend/. Neon's postgresql+psycopg:// scheme is handled by
 config.sqlalchemy_url. `serve` runs the API (uvicorn, port 8000) with
 DATABASE_URL alone: the backend refuses to start with the owner URL in its
 environment, so serving never gets it.
+
+--redteam targets the Neon branch "redteam" (NEON_REDTEAM_DATABASE_URL, its
+owner URL) and sets FINPILOT_NEON_BRANCH=redteam: the only place the red-team
+documents may be loaded (bank.corpus load --redteam refuses anywhere else).
 """
 import secrets
 import subprocess
@@ -34,16 +40,19 @@ def _values() -> dict:
     return dotenv_values(ENV)
 
 
-def _urls(branch: bool) -> tuple[str, str]:
-    """(owner URL, finpilot_app URL), on the main branch or on the Neon branch
-    NEON_BRANCH_DATABASE_URL (its owner URL; finpilot_app there has the same
-    name and password, copied with the branch and set again by the migrate step)."""
+BRANCHES = {"--branch": "NEON_BRANCH_DATABASE_URL", "--redteam": "NEON_REDTEAM_DATABASE_URL"}
+
+
+def _urls(branch: str | None) -> tuple[str, str]:
+    """(owner URL, finpilot_app URL), on the main branch or on a Neon branch
+    (BRANCHES: its owner URL; finpilot_app there has the same name and
+    password, copied with the branch and set again by the migrate step)."""
     from sqlalchemy import make_url
 
     values = _values()
     if not branch:
         return values["NEON_MIGRATION_DATABASE_URL"], values["NEON_APP_DATABASE_URL"]
-    owner, app = make_url(values["NEON_BRANCH_DATABASE_URL"]), make_url(values["NEON_APP_DATABASE_URL"])
+    owner, app = make_url(values[BRANCHES[branch]]), make_url(values["NEON_APP_DATABASE_URL"])
     return (owner.render_as_string(hide_password=False),
             owner.set(username=app.username, password=app.password).render_as_string(hide_password=False))
 
@@ -62,17 +71,20 @@ def ensure_app_url() -> None:
     print("Added NEON_APP_DATABASE_URL to .env (finpilot_app, new random password).")
 
 
-def run(command: list[str], branch: bool = False, owner_too: bool = True) -> int:
+def run(command: list[str], branch: str | None = None, owner_too: bool = True) -> int:
     import os
 
     values = _values()
-    needed = ["NEON_APP_DATABASE_URL", "NEON_BRANCH_DATABASE_URL" if branch else "NEON_MIGRATION_DATABASE_URL"]
+    needed = ["NEON_APP_DATABASE_URL", BRANCHES[branch] if branch else "NEON_MIGRATION_DATABASE_URL"]
     missing = [k for k in needed if not values.get(k)]
     if missing:
         print(f".env lacks {', '.join(missing)} (run `neon.py setup` first for the app URL).", file=sys.stderr)
         return 2
     owner, app = _urls(branch)
     env = dict(os.environ, DATABASE_URL=app)
+    env.pop("FINPILOT_NEON_BRANCH", None)
+    if branch == "--redteam":
+        env["FINPILOT_NEON_BRANCH"] = "redteam"
     env.pop("MIGRATION_DATABASE_URL", None)
     if owner_too:
         env["MIGRATION_DATABASE_URL"] = owner
@@ -87,8 +99,8 @@ def run(command: list[str], branch: bool = False, owner_too: bool = True) -> int
 
 def main() -> int:
     args = sys.argv[1:]
-    branch = "--branch" in args[:2]
-    args = [a for i, a in enumerate(args) if not (i < 2 and a == "--branch")]
+    branch = next((a for a in args[:2] if a in BRANCHES), None)
+    args = [a for i, a in enumerate(args) if not (i < 2 and a in BRANCHES)]
     if args[:1] == ["setup"]:
         if not branch:
             ensure_app_url()
