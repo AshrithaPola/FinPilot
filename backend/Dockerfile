@@ -13,7 +13,13 @@ COPY requirements.txt constraints.txt ./
 RUN pip install --no-cache-dir torch==2.14.1+cpu --index-url https://download.pytorch.org/whl/cpu \
     && pip install --no-cache-dir -r requirements.txt -c constraints.txt
 
+# The reranker's ONNX model (~80 MB) baked in: with min instances 0 on Cloud
+# Run, every cold start would otherwise download it on the first search.
+ENV FASTEMBED_CACHE_PATH=/opt/fastembed
+RUN python -c "from fastembed.rerank.cross_encoder import TextCrossEncoder; TextCrossEncoder('Xenova/ms-marco-MiniLM-L-6-v2')"
+
 COPY . .
 
 EXPOSE 8000
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Cloud Run sets PORT; Compose doesn't, so 8000.
+CMD ["sh", "-c", "exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]

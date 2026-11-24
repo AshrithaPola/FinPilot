@@ -1396,3 +1396,9 @@ Where they fit, and nothing else moved:
 - **Harder receipts.** Add 5 receipt images that are blurred, rotated and
   low-contrast, so the vision accuracy claim (10/10 per field) isn't
   measured on clean renders only.
+
+## Follow-ups
+
+- `frontend/src/api.ts`: its comment still says the Docker build proxies through
+  `nginx.conf`; the file is now `nginx.conf.template` (Phase 12 prep). Left
+  alone while app code is frozen during the eval re-runs.

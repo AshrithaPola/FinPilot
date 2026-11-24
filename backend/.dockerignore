@@ -8,3 +8,4 @@ pytest.ini
 conftest.py
 requirements-dev.txt
 .pytest_cache
+eval/runs

@@ -1,6 +1,8 @@
 # Serves the built SPA and proxies /api/* to the backend service.
+# A template: nginx fills ${PORT} and ${BACKEND_URL} from the environment at start
+# (Compose: 80 and http://backend:8000; Cloud Run: its PORT and the backend's https URL).
 server {
-    listen 80;
+    listen ${PORT};
 
     root /usr/share/nginx/html;
     index index.html;
@@ -12,8 +14,9 @@ server {
 
     # Same-origin API: the frontend only ever calls /api/...
     location /api/ {
-        proxy_pass http://backend:8000/;
+        proxy_pass ${BACKEND_URL}/;
         proxy_http_version 1.1;
+        proxy_ssl_server_name on;  # an https backend (Cloud Run) needs SNI
 
         # SSE: no buffering, long-lived connection
         proxy_buffering off;

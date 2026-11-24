@@ -13,6 +13,8 @@ ARG VITE_FIREBASE_APP_ID
 RUN npm run build
 
 FROM nginx:1.27.5-alpine
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# The image's entrypoint fills templates/*.template into conf.d at start.
+COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
+ENV PORT=80 BACKEND_URL=http://backend:8000
 EXPOSE 80
