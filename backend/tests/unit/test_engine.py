@@ -379,7 +379,8 @@ async def test_a_wrong_doc_type_guess_is_searched_again_across_every_type(engine
         _step("s1", "documents", "search", {"query": "fraud rules memo", "doc_type": "policy"})]}
     llm.answer = "The memo sets the card fraud engine's thresholds [1]."
     result = await engine_graph.answer("What does the fraud rules memo say?", ME)
-    assert "policy" in store.types[0] and store.types[1] is None and result["outcome"] == "answered"
+    family, own, every = store.types  # the family, the guess on its own, then every type
+    assert "policy" in family and own == "policy" and every is None and result["outcome"] == "answered"
     assert "query_rewriter" not in result["llm_calls_by_role"]  # fixed in code, no model call
     assert result["citations"][0]["filename"] == "internal/fraud-rules-memo.md"
 
@@ -630,8 +631,61 @@ async def test_a_guess_at_a_bank_terms_type_searches_the_whole_family(engine, mo
         _step("s1", "documents", "search", {"query": "dispute card charge deadline", "doc_type": "agreement"})]}
     llm.answer = "The overdraft fee is $15.00 per item [1]."
     await engine_graph.answer("How many days do I have to dispute a card charge?", ME)
-    [(types, _)] = store.calls
-    assert {"agreement", "policy", "fee_schedule"} <= set(types)  # the dispute policy is a "policy"
+    [(family, _), (own, _)] = store.calls
+    assert {"agreement", "policy", "fee_schedule"} <= set(family)  # the dispute policy is a "policy"
+    assert own == "agreement"  # and the guessed type on its own, ranked first
+
+
+class FamilyOutranksStore:
+    """Like fee-why-0036 on 2026-11-22: across the family, the deposit agreement's generic
+    fee clause outranks the schedule's cushion rule, which drops out of the top hits."""
+
+    def scoped(self, principal):
+        return self
+
+    async def search(self, query, filters=None):
+        clause = _hit("We may deduct fees from your account, even if that overdraws it.", "deposit-agreement.md",
+                      "Deposit Account Agreement > 11. Fees", 3.55, "a11")
+        rule = _hit("Overdraft fee: $15.00 per item when we pay a transaction that overdraws your available "
+                    "balance by more than $50.00.", "fee-schedule-2026.md", "Fees > 1. Everyday Checking", 0.96, "f1")
+        return [rule] if filters.doc_type == "fee_schedule" else [clause]
+
+
+async def test_the_guessed_types_own_hits_come_before_the_familys(engine, monkeypatch):
+    llm, _ = engine
+    monkeypatch.setattr(engine_graph, "get_store", lambda: FamilyOutranksStore())
+    llm.plan = {"intent": "fees", "out_of_scope": False, "steps": [
+        _step("s1", "documents", "search", {"query": "fee schedule", "doc_type": "fee_schedule"})]}
+    llm.answer = "The $15.00 fee applies to an overdraft of more than $50.00 [1]."
+    result = await engine_graph.answer("Why was I charged $15 on April 6, 2026?", ME)
+    assert [c["filename"] for c in result["citations"]] == ["fee-schedule-2026.md"]
+    [summarizer] = [c for c in llm.chat_calls if c["role"] == "summarizer"]
+    assert summarizer["user"].index("1. Everyday Checking") < summarizer["user"].index("11. Fees")
+
+
+SCHEDULE = '[2] Document fee-schedule-2026.md, section "1. Everyday Checking":\nOverdraft fee: $15.00 per item over the $50.00 cushion.'
+CLAUSE = '[3] Document deposit-agreement.md, section "11. Fees":\nWe may deduct fees, even if that overdraws it.'
+FEE_ROW = '[1] Result of list_fees:\n[{"amount_dollars": "$15.00"}]'
+
+
+def test_a_why_answer_must_cite_the_passage_that_states_the_amount():
+    sources = "\n\n".join((FEE_ROW, SCHEDULE, CLAUSE))
+    question = "Why was I charged $15 on April 6, 2026?"
+    reason = code_checks(question, "A $15.00 overdraft fee [1]; fees may overdraw the account [3].", sources, None)
+    assert "the passages that state that amount are [2]" in reason["gatekeeper"]
+    assert code_checks(question, "A $15.00 overdraft fee [1], over the $50.00 cushion [2].", sources, None) == {}
+    # No passage states the amount: any passage still counts, as before.
+    generic = "\n\n".join((FEE_ROW, CLAUSE))
+    assert code_checks(question, "A $15.00 fee [1]; fees may overdraw the account [3].", generic, None) == {}
+
+
+def test_a_negative_balance_in_the_evidence_supports_the_figure_in_the_answer():
+    evidence = ('[1] Result of list_fees:\n[{"amount_cents": 1500, "amount_dollars": "$15.00", '
+                '"balance_after_cents": -14056, "balance_after_dollars": "-$140.56"}]\n\n'
+                '[2] Result of list_transactions:\n[{"amount_cents": -60442, "amount_dollars": "-$604.42"}]')
+    assert ungrounded_amounts("The $604.42 payment left you at -$140.56, a $15.00 fee [1][2].", evidence) == []
+    assert ungrounded_amounts("You were overdrawn by $140.56 [1].", evidence) == []  # the sign dropped
+    assert ungrounded_amounts("A $60.44 payment [2].", evidence) == ["$60.44"]  # a digit dropped: caught
 
 
 async def test_a_past_date_also_searches_todays_version(engine, monkeypatch):
@@ -642,7 +696,8 @@ async def test_a_past_date_also_searches_todays_version(engine, monkeypatch):
         _step("s1", "documents", "search", {"query": "overdraft fee", "as_of": "2026-01-01"})]}
     llm.answer = "In January the fee was $34.00 [1]; today it's $15.00 [2]."
     result = await engine_graph.answer("Why were my overdraft fees $34 in January but only $15 now?", ME)
-    assert [as_of for _, as_of in store.calls] == ["2026-01-01", "2026-06-30"]
+    # The family and the guessed fee schedule on that date, then the family today.
+    assert [as_of for _, as_of in store.calls] == ["2026-01-01", "2026-01-01", "2026-06-30"]
     assert {c["filename"] for c in result["citations"]} == {"fee-schedule-2025.md", "fee-schedule-2026.md"}
     assert "searched the version in force on 2026-01-01 and today's" in result["plan"]["steps"][0]["note"]
     [summarizer] = [c for c in llm.chat_calls if c["role"] == "summarizer"]

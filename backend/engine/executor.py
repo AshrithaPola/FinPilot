@@ -319,6 +319,12 @@ class Executor:
         filters = Filters(doc_type=type_filter, as_of=as_of or self._today)
         store = self._store.scoped(principal)
         hits = await self._traced_search(store, query, filters)
+        if type_filter is BANK_TERMS:
+            # The family can outrank the guessed type's own rule (an agreement's generic fee
+            # clause above the schedule's cushion rule): the guessed type's hits come first.
+            own = await self._traced_search(store, query, Filters(doc_type=doc_type, as_of=filters.as_of))
+            seen = {h.chunk_id for h in own}
+            hits = own + [h for h in hits if h.chunk_id not in seen]
         if as_of and self._today and as_of < self._today:
             # A past date finds the version in force then; today's version is searched too,
             # so the answer can say what changed since.

@@ -141,6 +141,16 @@ def wrong_target(question: str, answer: str, sources: str) -> str | None:
     return None
 
 
+def _stating(question: str, answer: str, sources: str, passages: set[str]) -> set[str]:
+    """The document passages a "why" answer must cite one of: those stating an amount the
+    question asks about ("$15"), or, when it names none, one the answer explains. A generic
+    clause ("we may deduct fees") doesn't explain a $15 fee. No passage states it: any passage."""
+    wanted = {v for v, _ in _amounts(question, money_only=True)} or {v for v, _ in _amounts(answer, money_only=True)}
+    stating = {n for n, text in _EVIDENCE_BLOCK.findall(sources)
+               if n in passages and wanted & {v for v, _ in _amounts(text, money_only=True)}}
+    return stating or passages
+
+
 def code_checks(question: str, answer: str, sources: str, customer_id: str | None, not_found: bool = False) -> dict:
     """The checks that need no LLM. Returns {validator: reason} for each failure.
     A not-found answer cites nothing on purpose: the citation and target checks
@@ -158,11 +168,12 @@ def code_checks(question: str, answer: str, sources: str, customer_id: str | Non
     elif (target := wrong_target(question, answer, sources)) is not None:
         failures["gatekeeper"] = (f"the question asks about the {target}, but no evidence the answer cites is "
                                   "about it: answer from that, or say it couldn't be found")
-    elif _WHY.search(question) and passages and not passages & cited:
-        numbers = ", ".join(f"[{n}]" for n in sorted(passages, key=int))
+    elif _WHY.search(question) and passages and not (stating := _stating(question, answer, sources, passages)) & cited:
+        numbers = ", ".join(f"[{n}]" for n in sorted(stating, key=int))
+        which = "passages that state that amount" if stating != passages else "document passages"
         failures["gatekeeper"] = ("it doesn't say why: explain the rule from the bank's documents that applies "
                                   "(when the fee or decision applies and when it doesn't), citing the passage that "
-                                  f"states it (the document passages are {numbers})")
+                                  f"states it (the {which} are {numbers})")
     advice = _ADVICE.search(answer)
     others = {c for c in _CUSTOMER.findall(answer) if c != customer_id}
     if advice:

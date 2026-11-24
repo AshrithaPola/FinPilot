@@ -98,3 +98,21 @@ async def test_a_rescore_changes_only_what_the_corrected_set_changes():
     assert r["gold_cited"]["cited"] == 1 and r["retrieval"]["recall_at_5"] == 1.0  # the alternative counts
     assert r["facts_covered"] is None and r["facts"] == []  # the fact list is empty now: no judge call
     assert r["faithfulness"]["faithful"] and r["faithfulness"]["judge_error"]["reason"] == "the evidence states it"
+
+
+def test_documents_only_selects_the_questions_with_a_document_gold_source():
+    questions, _ = ev.load()
+    docs = run.selected(questions, documents_only=True)
+    assert docs and all(any(s.kind == "document" for s in q.gold_sources) for q in docs)
+    assert "b1-transfer-200" not in {q.id for q in docs} and "fee-why-0036" in {q.id for q in docs}
+    assert [q.id for q in run.selected(questions, "fee-why-0036,b1-transfer-200", documents_only=True)] == ["fee-why-0036"]
+    assert len(run.selected(questions)) == len(questions)
+
+
+def test_the_capture_keeps_every_draft_the_summarizer_wrote():
+    capture = run.Capture()
+    for n, draft in enumerate(("A $60.44 payment [1].", "A $604.42 payment [1].")):
+        capture.on_chain_start({}, {"question": "q"}, name="summarize", run_id=n)
+        capture.on_chain_end({"answer": draft}, run_id=n)
+    capture.on_chain_end({"answer": "not the summarizer"}, run_id=99)
+    assert capture.drafts == ["A $60.44 payment [1].", "A $604.42 payment [1]."]

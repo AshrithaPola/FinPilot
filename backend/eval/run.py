@@ -73,15 +73,23 @@ FAITH_SCHEMA = {"type": "object", "properties": {"faithful": {"type": "boolean"}
 
 class Capture(BaseCallbackHandler):
     """What the app did, read through LangChain callbacks: each search's ranked
-    hits, and the state the summarize node last ran on (its evidence)."""
+    hits, the state the summarize node last ran on (its evidence), and every
+    draft it wrote (a rejected draft is otherwise lost)."""
 
     def __init__(self):
         self.searches: list[list[dict]] = []
         self.summarize_state: dict | None = None
+        self.drafts: list[str] = []
+        self._summarize_runs: set = set()
 
     def on_chain_start(self, serialized, inputs, **kwargs):
         if kwargs.get("name") == "summarize" and isinstance(inputs, dict):
             self.summarize_state = inputs
+            self._summarize_runs.add(kwargs.get("run_id"))
+
+    def on_chain_end(self, outputs, **kwargs):
+        if kwargs.get("run_id") in self._summarize_runs and isinstance(outputs, dict) and outputs.get("answer"):
+            self.drafts.append(outputs["answer"])
 
     def on_retriever_end(self, documents, **kwargs):
         self.searches.append([{"filename": d.metadata.get("filename"), "section": d.metadata.get("section")}
@@ -200,6 +208,7 @@ async def run_question(q: ev.Question, judge: bool = True) -> dict:
                   "status": s["status"], "error": s["error"], "note": s.get("note")}
                  for s in (result.get("plan") or {}).get("steps", [])],
         "validation": result.get("validation", []),
+        "drafts": capture.drafts,
         "latency_s": round(result["timings"]["total_ms"] / 1000, 2),
         "llm_calls": result["llm_calls"], "llm_calls_by_role": result["llm_calls_by_role"],
         "tokens_by_role": result["tokens_by_role"], "est_cost_usd": totals.get("est_cost_usd", 0),
@@ -333,14 +342,23 @@ def _settings_snapshot() -> dict:
             "validation": s.eval_validation}
 
 
+def selected(questions: list[ev.Question], ids: str | None = None, documents_only: bool = False) -> list[ev.Question]:
+    """The questions to run: the ids given (comma-separated), and with documents_only just those
+    with a document gold source, the ones recall@5 is scored on (for the retrieval ablations)."""
+    if ids:
+        wanted = ids.split(",")
+        questions = [q for q in questions if q.id in wanted]
+    if documents_only:
+        questions = [q for q in questions if any(s.kind == "document" for s in q.gold_sources)]
+    return questions
+
+
 async def main_async(args) -> int:
     questions, errors = ev.load()
     if errors:
         print("\n".join(errors), file=sys.stderr)
         return 2
-    if args.ids:
-        wanted = args.ids.split(",")
-        questions = [q for q in questions if q.id in wanted]
+    questions = selected(questions, args.ids, args.documents_only)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out = RUNS / f"{stamp}-{args.label}"
     out.mkdir(parents=True, exist_ok=True)
@@ -355,7 +373,7 @@ async def main_async(args) -> int:
                                                     indent=2, default=str), encoding="utf-8")
     scored = [r for r in records if "error" not in r]
     attempts = [a for r in records for a in r.get("failed_attempts", [])]
-    report = {"settings": _settings_snapshot(), "summary": summarize(scored) if scored else {},
+    report = {"settings": _settings_snapshot(), "documents_only": args.documents_only, "summary": summarize(scored) if scored else {},
               "capacity": {"timeouts": sum(a["kind"] == "timeout" for a in attempts),
                            "retries_503": sum(r.get("retries_503", 0) for r in scored),
                            "quota_or_overload": sum(a["kind"] != "timeout" for a in attempts),
@@ -372,6 +390,8 @@ def main() -> int:
     parser.add_argument("--label", default="run")
     parser.add_argument("--ids", help="comma-separated question ids (default: all)")
     parser.add_argument("--no-judge", action="store_true", help="skip the judge calls")
+    parser.add_argument("--documents-only", action="store_true",
+                        help="only the questions with a document gold source (the retrieval ablations)")
     return asyncio.run(main_async(parser.parse_args()))
 
 
