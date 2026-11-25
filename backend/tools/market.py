@@ -4,8 +4,8 @@ fetches them; nothing here calls an outside service at question time).
 
 Public reference data, the same for everyone: any signed-in caller may ask,
 and the transaction is READ ONLY. Every row says where it came from and as
-of when, so an answer can cite it: Alpha Vantage prices with their date
-("Prices: Alpha Vantage"), the synthetic demo prices marked as such, SEC
+of when, so an answer can cite it: Alpha Vantage month-end closes with their
+date ("Prices: Alpha Vantage"), SEC
 figures with the filing's form, date and accession number, FRED values with
 the notice FRED's terms require.
 """
@@ -20,7 +20,7 @@ from tools.common import AccessRefused, Args, Tool, ToolError, read_only, rows, 
 
 Symbol = Annotated[str, Field(pattern=r"^[A-Z]{1,5}$")]
 FRED_NOTICE = "This product uses the FRED® API but is not endorsed or certified by the Federal Reserve Bank of St. Louis."
-PRICE_SOURCES = {"alphavantage": "Prices: Alpha Vantage", "synthetic": "Synthetic demo price (not a market price)"}
+PRICE_SOURCES = {"alphavantage": "Prices: Alpha Vantage"}
 
 
 class PriceArgs(Args):

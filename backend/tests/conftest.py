@@ -53,6 +53,19 @@ def _no_langfuse(monkeypatch):
     config.get_settings.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def _flat_purchase_closes(request, monkeypatch):
+    """Test databases have no Alpha Vantage prices (never fetched in tests), so
+    synthetic.load prices every holding at a flat $100 close on the 28th of its
+    purchase month; tests marked real_closes read the prices table instead."""
+    if "real_closes" in request.keywords:
+        return
+    from bank import synthetic
+
+    monkeypatch.setattr(synthetic, "_purchase_closes", lambda conn: {
+        (s, m): (m.replace(day=28), 100.0) for s, *_ in synthetic.SECURITIES for m in synthetic.PURCHASE_MONTHS})
+
+
 @pytest.fixture
 def fake_llm():
     return FakeLLM()

@@ -80,7 +80,6 @@ the answer from the numbered evidence only.
 - Give balances and prices with their "as of" date. If the question asks about a different date or
   period than the evidence covers (say, a balance "today" when it's as of an earlier day), say which
   date the figures are for. Never present figures for one date as another's.
-- Say when a price is a synthetic demo price.
 - When the evidence holds two versions of a document (the one in force on the date asked about and
   today's), say which applied when, and what changed and from when.
 - State each calculation result in the evidence (a total, a difference, what's left): it's why the

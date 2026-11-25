@@ -253,7 +253,7 @@ From the command line, as a synthetic customer: `python -m engine.cli --customer
 - **The retrieval numbers are likely optimistic.** The MRR of 0.93 on 19 questions in the branch experiment was measured after a fix made while looking at those same questions.
 - **The reranker is slow on CPU and weak on table rows.** It takes 0.9 to 1.5 s a search on a laptop CPU, and it ranked two table rows down in the branch experiment.
 - **Receipts are clean renders.** The 10/10 field accuracy is on rendered images, not blurred, rotated or low-contrast ones. There are no statement images yet.
-- **Partial data sources.** Investor.gov blocks automated clients, so its pages aren't loaded. Prices are labelled synthetic and FRED rates are empty until the Alpha Vantage and FRED keys are set.
+- **Partial data sources.** Investor.gov blocks automated clients, so its pages aren't loaded. Prices are real month-end closes (Alpha Vantage's free monthly series), so a price "as of" a mid-month date is the previous month-end's, and there are none until the Alpha Vantage key is set; FRED rates are empty until the FRED key is set.
 - **Access model:**
   - Clearance is a single ordered level with no compartments: a user at level N sees everything at N or below in their org and teams.
   - Firebase's revoked-token check is a network call, so only `/admin/*` makes it. Elsewhere a revoked token keeps working until it expires (at most an hour); setting `users.active=false` is the immediate off switch everywhere.

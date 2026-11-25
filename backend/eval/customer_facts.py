@@ -110,21 +110,31 @@ def sheet(conn, customer: str, today) -> list[str]:
                   [[f["assessed_on"], usd(f["amount_cents"]), f["account_id"], "yes" if f["waived"] else "no"]
                    for f in late])
 
-    out += [f"### Holdings, priced on {today}", ""]
+    out += [f"### Holdings, priced on {today} (price return, excludes dividends)", ""]
     holdings = q("""
-        SELECT h.account_id, h.symbol, s.name, h.quantity, h.cost_basis_cents, p.price_date, p.close, p.source
+        SELECT h.account_id, h.symbol, s.name, h.quantity, h.cost_basis_cents, h.purchased_on, p.price_date, p.close, p.source
         FROM holdings h JOIN securities s USING (symbol)
         LEFT JOIN LATERAL (SELECT price_date, close, source FROM prices
                            WHERE symbol = h.symbol AND price_date <= :today
                            ORDER BY price_date DESC LIMIT 1) p ON true
         WHERE h.customer_id = :c ORDER BY h.symbol""")
     rows = []
+    HIDDEN = "(computed from an Alpha Vantage close, not committed)"
     for h in holdings:
-        value = (Decimal(str(h["quantity"])) * Decimal(str(h["close"])) * 100).quantize(Decimal(1), ROUND_HALF_UP) if h["close"] else None
-        rows.append([h["symbol"], h["name"], h["quantity"], usd(h["cost_basis_cents"]),
-                     f"{usd(Decimal(str(h['close'])) * 100)} on {h['price_date']} ({h['source']})" if h["close"] else "-",
-                     usd(value) if value is not None else "-", h["account_id"]])
-    out += _table(["Symbol", "Name", "Quantity", "Cost basis", "Close", "Market value", "Account"], rows)
+        if h["source"] == "alphavantage":
+            # Alpha Vantage's terms: personal use, and the values are never committed (data/SOURCES.md).
+            close, value = f"Alpha Vantage close on {h['price_date']} (not committed)", HIDDEN
+        elif h["close"]:
+            close = f"{usd(Decimal(str(h['close'])) * 100)} on {h['price_date']} ({h['source']})"
+            value = usd((Decimal(str(h["quantity"])) * Decimal(str(h["close"])) * 100).quantize(Decimal(1), ROUND_HALF_UP))
+        else:
+            close, value = "-", "-"
+        purchased = f"{h['purchased_on']:%Y-%m}" if h["purchased_on"] else "-"
+        # shares x a purchase-month close: committing it would reveal that close
+        basis = HIDDEN if h["purchased_on"] else usd(h["cost_basis_cents"])
+        rows.append([h["symbol"], h["name"], h["quantity"], purchased, basis, close, value,
+                     h["account_id"]])
+    out += _table(["Symbol", "Name", "Quantity", "Purchased", "Cost basis", "Close", "Market value", "Account"], rows)
     return out
 
 

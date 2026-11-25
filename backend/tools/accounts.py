@@ -163,7 +163,7 @@ def _balance(conn, args: BalanceArgs) -> list[dict]:
 
 def _holdings(conn, args: NoArgs) -> list[dict]:
     return rows(conn, """
-        SELECT h.account_id, h.symbol, s.name, s.type, h.quantity, h.cost_basis_cents
+        SELECT h.account_id, h.symbol, s.name, s.type, h.quantity, h.cost_basis_cents, h.purchased_on
         FROM holdings h JOIN securities s USING (symbol)
         ORDER BY h.account_id, h.symbol
     """)
@@ -184,7 +184,8 @@ TOOLS = {t.name: t for t in (
          "fee type, include_waived and limit (at most 200). For a fee a transaction caused, "
          "balance_after_cents is the account's balance right after that transaction (before the fee).",
          FeeArgs, _fees),
-    Tool("list_holdings", "The customer's investment holdings: symbol, name, quantity, cost basis.",
+    Tool("list_holdings", "The customer's investment holdings: symbol, name, quantity, cost basis, "
+         "purchase date (the month-end close that set the cost basis).",
          NoArgs, _holdings),
 )}
 

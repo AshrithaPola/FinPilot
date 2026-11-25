@@ -94,6 +94,9 @@ def test_price_and_rate_parsers():
     payload = {"Time Series (Daily)": {"2026-11-13": {"4. close": "301.27"}}}
     assert parse_alpha_vantage("VTI", payload) == [
         {"symbol": "VTI", "price_date": date(2026, 11, 13), "close": "301.27", "source": "alphavantage"}]
+    monthly = {"Monthly Time Series": {"2026-07-31": {"4. close": "340.10"}, "2026-06-30": {"4. close": "330.00"},
+                                       "2025-07-31": {"4. close": "305.50"}}}
+    assert [(r["price_date"], r["close"]) for r in parse_alpha_vantage("VTI", monthly, through=date(2026, 6, 30))]         == [(date(2026, 6, 30), "330.00"), (date(2025, 7, 31), "305.50")]  # nothing after the demo's today
     with pytest.raises(RuntimeError, match="no prices for VTI"):
         parse_alpha_vantage("VTI", {"Note": "Thank you for using Alpha Vantage! ... 25 requests per day."})
     observations = {"observations": [{"date": "2026-11-12", "value": "7.50"}, {"date": "2026-11-11", "value": "."}]}

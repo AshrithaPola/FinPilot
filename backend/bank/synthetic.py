@@ -64,13 +64,32 @@ def schedule_on(day: date) -> FeeSchedule:
     return FEE_SCHEDULES[max(d for d in FEE_SCHEDULES if d <= day)]
 
 
-SECURITIES = [  # symbol, name, type, expense ratio; prices below are synthetic
+SECURITIES = [  # symbol, name, type, expense ratio; prices are real (bank/market.py, Alpha Vantage)
     ("VTI", "Vanguard Total Stock Market ETF", "etf", "0.0003"),
     ("VXUS", "Vanguard Total International Stock ETF", "etf", "0.0005"),
     ("BND", "Vanguard Total Bond Market ETF", "etf", "0.0003"),
     ("SCHD", "Schwab U.S. Dividend Equity ETF", "etf", "0.0006"),
 ]
-START_PRICES = {"VTI": 290.0, "VXUS": 62.0, "BND": 72.5, "SCHD": 27.8}
+# Each holding's purchase month (seeded per holding) and its cost basis: shares x that
+# month's real Alpha Vantage close, read from the database at load time, so no
+# Alpha Vantage price is committed (data/SOURCES.md). Price return only: no dividends.
+PURCHASE_MONTHS = [date(y, m, 1) for y in range(2020, 2026) for m in range(1, 13) if date(y, m, 1) <= date(2025, 6, 1)]
+# The monthly series isn't split-adjusted. SCHD's 3-for-1 split, confirmed by the data:
+# month-end close $84.53 in Sep 2024, about $28 in Oct 2024.
+SPLITS = {"SCHD": (date(2024, 10, 11), 3)}
+
+
+def split_adjusted(symbol: str, price_date: date, close: float) -> float:
+    """A close in today's shares: divided by the ratio of each later split."""
+    for day, ratio in [SPLITS[symbol]] if symbol in SPLITS else []:
+        if price_date < day:
+            close /= ratio
+    return close
+
+
+def purchase_month(seed: int, customer_id: str, symbol: str) -> date:
+    """Its own random stream, so the main one (every other row) is unchanged."""
+    return random.Random(f"{seed}:{customer_id}:{symbol}:purchase").choice(PURCHASE_MONTHS)
 
 # Fictional merchants: (name, category, low, high) in dollars.
 MERCHANTS = [
@@ -118,14 +137,12 @@ def generate(seed: int = 7, customers: int = 50) -> dict[str, list[dict]]:
         "holdings")}
     out["securities"] = [{"symbol": s, "name": n, "type": t, "expense_ratio": e}
                          for s, n, t, e in SECURITIES]
-    prices = dict(START_PRICES)
+    # Prices are real now (bank/market.py). The random draws that made the old
+    # synthetic prices stay, so every customer's data after them is unchanged.
     for day in _days(START, END):
-        if day.weekday() >= 5:
-            continue
-        for symbol in prices:
-            prices[symbol] = round(prices[symbol] * (1 + rng.gauss(0.0003, 0.009)), 4)
-            out["prices"].append({"symbol": symbol, "price_date": day, "close": prices[symbol],
-                                  "source": "synthetic"})
+        if day.weekday() < 5:
+            for _ in SECURITIES:
+                rng.gauss(0.0003, 0.009)
 
     for n in range(1, customers + 1):
         cid = f"cust-{n:04d}"
@@ -134,7 +151,7 @@ def generate(seed: int = 7, customers: int = 50) -> dict[str, list[dict]]:
             "customer_id": cid, "org_id": BANK_ORG, "segment": segment,
             "full_name": f"{rng.choice(FIRST)} {rng.choice(LAST)}",
             "joined_on": START - timedelta(days=rng.randint(30, 3000))})
-        _customer_rows(rng, cid, segment, out, prices, random.Random(f"{seed}:{cid}:start"))
+        _customer_rows(rng, cid, segment, out, random.Random(f"{seed}:{cid}:start"), seed)
     return out
 
 
@@ -146,7 +163,7 @@ def _statement(rng, due: date, amount: int, late_payer: bool) -> dict:
             "pay_on": due + timedelta(days=rng.randint(3, 12)) if late else due}
 
 
-def _customer_rows(rng, cid, segment, out, last_prices, start_rng) -> None:
+def _customer_rows(rng, cid, segment, out, start_rng, seed: int) -> None:
     """One customer's rows. Starting balances (on START) come from
     `start_rng`, a stream of their own, so adding them changed no other row
     (and none of the receipts drawn from these transactions)."""
@@ -291,12 +308,13 @@ def _customer_rows(rng, cid, segment, out, last_prices, start_rng) -> None:
             deposits_this_month = 0
 
     if segment == "premier":
-        for symbol in rng.sample(list(START_PRICES), rng.randint(1, 3)):
+        for symbol in rng.sample([s for s, *_ in SECURITIES], rng.randint(1, 3)):
             quantity = round(rng.uniform(5, 120), 3)
-            basis = int(quantity * START_PRICES[symbol] * rng.uniform(0.8, 1.05) * 100)
+            rng.uniform(0.8, 1.05)  # the old cost-basis factor: unused, drawn so later rows stay the same
+            # cost_basis_cents and purchased_on are set by load(), from the real close.
             out["holdings"].append({"account_id": f"{cid}-brk", "customer_id": cid,
                                     "symbol": symbol, "quantity": quantity,
-                                    "cost_basis_cents": basis})
+                                    "purchase_month": purchase_month(seed, cid, symbol)})
 
 
 # --- loading ----------------------------------------------------------------------
@@ -314,15 +332,33 @@ def _insert(conn, table: str, rows: list[dict]) -> None:
         conn.execute(sa.insert(sa.table(table, *map(sa.column, rows[0]))), rows)
 
 
+def priced_holdings(holdings: list[dict], closes: dict[tuple[str, date], tuple[date, float]]) -> list[dict]:
+    """Each holding with purchased_on (its month's last close date) and
+    cost_basis_cents = shares x that close, split-adjusted. `closes` maps
+    (symbol, first of month) to (price_date, close)."""
+    out, missing = [], sorted({(h["symbol"], h["purchase_month"]) for h in holdings} - set(closes))
+    if missing:
+        raise RuntimeError("No Alpha Vantage close for " + ", ".join(f"{s} {m:%Y-%m}" for s, m in missing)
+                           + ": fetch prices first (python -m bank.market fetch prices).")
+    for h in holdings:
+        day, close = closes[(h["symbol"], h["purchase_month"])]
+        row = {k: v for k, v in h.items() if k != "purchase_month"}
+        out.append({**row, "purchased_on": day,
+                    "cost_basis_cents": round(h["quantity"] * split_adjusted(h["symbol"], day, close) * 100)})
+    return out
+
+
+def _purchase_closes(conn) -> dict[tuple[str, date], tuple[date, float]]:
+    import sqlalchemy as sa
+
+    return {(s, d.replace(day=1)): (d, float(c)) for s, d, c in conn.execute(sa.text(
+        "SELECT symbol, price_date, close FROM prices WHERE source = 'alphavantage' "
+        "AND price_date >= :a AND price_date < :b"), {"a": PURCHASE_MONTHS[0], "b": date(2025, 7, 1)})}
+
+
 def load(owner_url: str, data: dict[str, list[dict]]) -> dict[str, int]:
     """Write `data` (from generate) as the owner. Returns rows written per table."""
     import sqlalchemy as sa
-
-    by_customer: dict[str, dict[str, list[dict]]] = {
-        c["customer_id"]: {t: [] for t in CHILDREN} for c in data["customers"]}
-    for table in CHILDREN:
-        for row in data[table]:
-            by_customer[row["customer_id"]][table].append(row)
 
     engine = sa.create_engine(sqlalchemy_url(owner_url))
     try:
@@ -334,9 +370,15 @@ def load(owner_url: str, data: dict[str, list[dict]]) -> dict[str, int]:
                 ON CONFLICT (symbol) DO UPDATE SET name = EXCLUDED.name, type = EXCLUDED.type,
                     expense_ratio = EXCLUDED.expense_ratio
             """), data["securities"])
-            # Only synthetic prices are replaced; fetched ones (Phase 5) stay.
+            # Removes the synthetic prices older loads wrote; fetched ones (Alpha Vantage) stay.
             conn.execute(sa.text("DELETE FROM prices WHERE source = 'synthetic'"))
             _insert(conn, "prices", data["prices"])
+            holdings = priced_holdings(data["holdings"], _purchase_closes(conn))
+        by_customer: dict[str, dict[str, list[dict]]] = {
+            c["customer_id"]: {t: [] for t in CHILDREN} for c in data["customers"]}
+        for table in CHILDREN:
+            for row in (holdings if table == "holdings" else data[table]):
+                by_customer[row["customer_id"]][table].append(row)
         for customer in data["customers"]:
             cid = customer["customer_id"]
             with engine.begin() as conn:

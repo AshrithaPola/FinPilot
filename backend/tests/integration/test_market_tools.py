@@ -16,10 +16,12 @@ USER = Access(org_id=synthetic.BANK_ORG, clearance=0, customer_id="cust-0001")
 @pytest.fixture
 def tools(pg_url, app_url):
     _store(pg_url, app_url)
-    synthetic.load(pg_url, synthetic.generate(customers=1))  # securities and synthetic prices
+    synthetic.load(pg_url, synthetic.generate(customers=1))  # securities (prices come from Alpha Vantage)
     owner = sa.create_engine(pg_url)
     with owner.begin() as conn:
-        conn.execute(sa.text("INSERT INTO prices VALUES ('VTI', '2026-11-13', 301.27, 'alphavantage')"))
+        conn.execute(sa.text("INSERT INTO prices VALUES ('VTI', '2025-12-31', 330.12, 'alphavantage'), "
+                             "('VTI', '2026-01-30', 333.40, 'alphavantage'), "
+                             "('VTI', '2026-11-13', 301.27, 'alphavantage')"))
         conn.execute(sa.text("""
             INSERT INTO company_facts VALUES
               ('KO', 21344, 'revenue', 'Revenues', 'Revenues', 'USD', 2024, '2024-12-31', 47061000000,
@@ -36,8 +38,8 @@ def test_prices_are_the_latest_on_or_before_the_date_with_their_source(tools):
     [latest] = tools.call(USER, "get_price", {"symbol": "VTI"})
     assert (latest["price_date"], latest["close"], latest["attribution"]) == (
         "2026-11-13", "301.2700", "Prices: Alpha Vantage")
-    [old] = tools.call(USER, "get_price", {"symbol": "VTI", "as_of": "2026-01-04"})  # a Sunday
-    assert old["price_date"] <= "2026-01-04" and old["source"] == "synthetic"
+    [old] = tools.call(USER, "get_price", {"symbol": "VTI", "as_of": "2026-01-04"})  # mid-month: the last month-end
+    assert (old["price_date"], old["close"]) == ("2025-12-31", "330.1200")
     history = tools.call(USER, "get_price_history", {"symbol": "VTI", "limit": 3})
     assert [h["price_date"] for h in history] == sorted((h["price_date"] for h in history), reverse=True)
     assert tools.call(USER, "get_price", {"symbol": "ZZZZ"}) == []
@@ -57,3 +59,16 @@ def test_the_app_role_cannot_write_market_data(tools, app_url):
         with pytest.raises(sa.exc.DBAPIError, match="permission denied"):
             with sa.create_engine(app_url).begin() as conn:
                 conn.execute(sa.text(statement))
+
+
+def test_cached_symbols_are_not_fetched_again_and_a_partial_store_keeps_the_rest(tools, pg_url):
+    from bank import market
+
+    assert market.cached_symbols(pg_url) == {"VTI"}  # the fixture's rows
+    with sa.create_engine(pg_url).begin() as conn:  # an old synthetic price on the same date
+        conn.execute(sa.text("INSERT INTO prices VALUES ('BND', '2026-06-30', 87.16, 'synthetic')"))
+    market.store(pg_url, "prices", [{"symbol": "BND", "price_date": "2026-06-30", "close": "74.10",
+                                     "source": "alphavantage"}], scope=["BND"])
+    assert market.cached_symbols(pg_url) == {"VTI", "BND"}  # storing BND left VTI's rows alone
+    with sa.create_engine(pg_url).connect() as conn:
+        assert conn.execute(sa.text("SELECT source FROM prices WHERE symbol = 'BND'")).scalars().all() == ["alphavantage"]

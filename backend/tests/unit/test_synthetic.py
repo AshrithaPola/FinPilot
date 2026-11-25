@@ -1,6 +1,7 @@
 """The synthetic customer data (bank/synthetic.py): deterministic, internally
 consistent, and charging exactly what the fee schedule in force says."""
 from collections import Counter
+from datetime import date
 
 import pytest
 
@@ -123,3 +124,44 @@ def test_cards_are_paid_by_autopay_and_some_customers_pay_late(data):
         if f["account_id"] in owed and not f["waived"]:
             owed[f["account_id"]] -= f["amount_cents"]
     assert all(v <= 0 for v in owed.values())  # a card is never in credit: payments never exceed what's owed
+
+
+def test_no_synthetic_prices(data):
+    # Prices are real (bank/market.py, Alpha Vantage); the generator makes none.
+    assert data["prices"] == []
+
+
+def test_scheds_split_divides_closes_before_it_only():
+    from bank.synthetic import split_adjusted
+
+    assert split_adjusted("SCHD", date(2024, 9, 30), 84.53) == pytest.approx(84.53 / 3)
+    assert split_adjusted("SCHD", date(2024, 10, 31), 28.24) == 28.24  # after the split: unchanged
+    assert split_adjusted("VTI", date(2021, 4, 30), 217.10) == 217.10  # no split
+
+
+def test_holdings_get_a_seeded_purchase_month_and_no_cost_yet(data):
+    from bank.synthetic import PURCHASE_MONTHS, purchase_month
+
+    assert all(h["purchase_month"] in PURCHASE_MONTHS and "cost_basis_cents" not in h for h in data["holdings"])
+    assert purchase_month(7, "cust-0019", "BND") == purchase_month(7, "cust-0019", "BND")
+
+
+def test_cost_basis_is_shares_times_the_purchase_months_split_adjusted_close():
+    from bank.synthetic import priced_holdings
+
+    holdings = [{"customer_id": "c", "account_id": "c-brk", "symbol": "SCHD", "quantity": 10.0,
+                 "purchase_month": date(2024, 4, 1)},
+                {"customer_id": "c", "account_id": "c-brk", "symbol": "VTI", "quantity": 2.5,
+                 "purchase_month": date(2021, 4, 1)}]
+    closes = {("SCHD", date(2024, 4, 1)): (date(2024, 4, 30), 76.99), ("VTI", date(2021, 4, 1)): (date(2021, 4, 30), 217.10)}
+    schd, vti = priced_holdings(holdings, closes)
+    assert schd["purchased_on"] == date(2024, 4, 30) and schd["cost_basis_cents"] == 25_663  # 10 x 76.99 / 3
+    assert vti["cost_basis_cents"] == 54_275 and "purchase_month" not in vti
+
+
+def test_a_missing_close_stops_the_load():
+    from bank.synthetic import priced_holdings
+
+    with pytest.raises(RuntimeError, match="BND 2020-03.*fetch prices first"):
+        priced_holdings([{"customer_id": "c", "account_id": "c-brk", "symbol": "BND", "quantity": 1.0,
+                          "purchase_month": date(2020, 3, 1)}], {})

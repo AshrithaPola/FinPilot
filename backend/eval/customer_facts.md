@@ -93,7 +93,7 @@ Name: Amara Haddad. Segment: retail. Joined: 2023-01-03.
 | 2026-01-26 | $25.00 | cust-0036-cc | no |
 | 2026-04-26 | $25.00 | cust-0036-cc | no |
 
-### Holdings, priced on 2026-06-30
+### Holdings, priced on 2026-06-30 (price return, excludes dividends)
 
 None.
 
@@ -176,13 +176,13 @@ Name: Nia Iyer. Segment: premier. Joined: 2021-09-25.
 | 2026-01-26 | $25.00 | cust-0019-cc | no |
 | 2026-04-26 | $25.00 | cust-0019-cc | no |
 
-### Holdings, priced on 2026-06-30
+### Holdings, priced on 2026-06-30 (price return, excludes dividends)
 
-| Symbol | Name | Quantity | Cost basis | Close | Market value | Account |
-|---|---|---|---|---|---|---|
-| BND | Vanguard Total Bond Market ETF | 111.725000 | $7,000.65 | $87.16 on 2026-06-30 (synthetic) | $9,738.17 | cust-0019-brk |
-| VTI | Vanguard Total Stock Market ETF | 5.138000 | $1,392.71 | $337.35 on 2026-06-30 (synthetic) | $1,733.29 | cust-0019-brk |
-| VXUS | Vanguard Total International Stock ETF | 81.988000 | $5,234.04 | $73.39 on 2026-06-30 (synthetic) | $6,016.70 | cust-0019-brk |
+| Symbol | Name | Quantity | Purchased | Cost basis | Close | Market value | Account |
+|---|---|---|---|---|---|---|---|
+| BND | Vanguard Total Bond Market ETF | 111.725000 | 2020-03 | (computed from an Alpha Vantage close, not committed) | Alpha Vantage close on 2026-06-30 (not committed) | (computed from an Alpha Vantage close, not committed) | cust-0019-brk |
+| VTI | Vanguard Total Stock Market ETF | 5.138000 | 2021-05 | (computed from an Alpha Vantage close, not committed) | Alpha Vantage close on 2026-06-30 (not committed) | (computed from an Alpha Vantage close, not committed) | cust-0019-brk |
+| VXUS | Vanguard Total International Stock ETF | 81.988000 | 2023-05 | (computed from an Alpha Vantage close, not committed) | Alpha Vantage close on 2026-06-30 (not committed) | (computed from an Alpha Vantage close, not committed) | cust-0019-brk |
 
 ## cust-0011
 
@@ -302,6 +302,6 @@ Name: Nia Novak. Segment: student. Joined: 2025-05-20.
 | 2026-03-26 | $25.00 | cust-0011-cc | no |
 | 2026-05-26 | $25.00 | cust-0011-cc | no |
 
-### Holdings, priced on 2026-06-30
+### Holdings, priced on 2026-06-30 (price return, excludes dividends)
 
 None.

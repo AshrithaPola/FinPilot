@@ -86,3 +86,30 @@ def test_the_app_role_sees_each_customers_own_rows_only(client, pg_url, app_url,
             assert canary(cid) in text and not any(canary(o) in text for o in others)
     finally:
         app.dispose()
+
+
+@pytest.mark.real_closes
+def test_holdings_are_priced_from_the_fetched_month_end_closes(client, pg_url):
+    from bank.synthetic import PURCHASE_MONTHS, SECURITIES, split_adjusted
+
+    data = generate(seed=7, customers=20)
+    engine = sa.create_engine(pg_url)
+    try:
+        with engine.begin() as conn:  # securities first (prices reference them), then a close per month
+            conn.execute(sa.text("INSERT INTO securities VALUES (:s, :s, 'etf', 0) ON CONFLICT DO NOTHING"),
+                         [{"s": s} for s, *_ in SECURITIES])
+            conn.execute(sa.text("INSERT INTO prices VALUES (:s, :d, :c, 'alphavantage')"),
+                         [{"s": s, "d": m.replace(day=27), "c": 50 + m.month} for s, *_ in SECURITIES
+                          for m in PURCHASE_MONTHS])
+        load(pg_url, data)
+        with engine.begin() as conn:
+            stored = {(r.customer_id, r.symbol): r for r in conn.execute(sa.text(
+                "SELECT customer_id, symbol, quantity, cost_basis_cents, purchased_on FROM holdings"))}
+    finally:
+        engine.dispose()
+    assert data["holdings"] and len(stored) == len(data["holdings"])
+    for h in data["holdings"]:
+        row = stored[(h["customer_id"], h["symbol"])]
+        day = h["purchase_month"].replace(day=27)
+        assert row.purchased_on == day
+        assert row.cost_basis_cents == round(h["quantity"] * split_adjusted(h["symbol"], day, 50 + day.month) * 100)

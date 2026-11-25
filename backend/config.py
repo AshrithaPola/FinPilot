@@ -77,7 +77,8 @@ class Settings(BaseSettings):
     # <name> <email>". In .env only, never committed.
     sec_user_agent: str | None = None
     # Market data (bank/market.py): free keys, in .env only.
-    alpha_vantage_api_key: str | None = None
+    alpha_vantage_api_key: str | None = Field(default=None, validation_alias=AliasChoices(
+        "ALPHA_VANTAGE_API_KEY", "ALPHAVANTAGE_API_KEY"))
     fred_api_key: str | None = None
 
     # --- Langfuse (observability.py): masked LLM traces, in .env only ---

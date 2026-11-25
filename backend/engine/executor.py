@@ -235,7 +235,7 @@ def source_label(step: Step, rows: list) -> str:
         day = _day(first.get("obs_date"))
         return f"{first.get('title') or args.get('series_id', '')}" + (f" as of {day}" if day else "")
     return {"list_accounts": "Your accounts", "list_cards": "Your cards",
-            "list_holdings": "Your holdings"}.get(tool, tool.replace("_", " ").capitalize())
+            "list_holdings": "Your holdings (price return, excludes dividends)"}.get(tool, tool.replace("_", " ").capitalize())
 
 
 class Executor:
