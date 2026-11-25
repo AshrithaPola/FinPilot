@@ -24,14 +24,15 @@ REPO="$REGION-docker.pkg.dev/$PROJECT_ID/finpilot"
 TAG="$(git -C "$ROOT" rev-parse --short HEAD)"
 SA="finpilot-backend@$PROJECT_ID.iam.gserviceaccount.com"
 
-ENV_FILE="${ENV_FILE:-$ROOT/.env}"
 BIND_WAIT_S="${BIND_WAIT_S:-10}"
 
 # Test mode: only the fake gcloud, and secrets from a test .env, never the real ones.
+# (-ef alone is false when .env doesn't exist, as in CI, so an unset ENV_FILE refuses too.)
 source "$ROOT/scripts/gcp_test_mode.sh"
-if [[ -n "${FINPILOT_FAKE_GCLOUD:-}" && "$ENV_FILE" -ef "$ROOT/.env" ]]; then
+if [[ -n "${FINPILOT_FAKE_GCLOUD:-}" ]] && [[ -z "${ENV_FILE:-}" || "$ENV_FILE" -ef "$ROOT/.env" ]]; then
   echo "Test mode: set ENV_FILE to a test .env. Refusing to run." >&2; exit 2
 fi
+ENV_FILE="${ENV_FILE:-$ROOT/.env}"
 
 run() { if $APPLY; then "$@"; else printf '+ %q' "$1"; shift; printf ' %q' "$@"; echo; fi; }
 env_value() { grep -E "^$1=" "$ENV_FILE" | tail -1 | cut -d= -f2- || true; }
