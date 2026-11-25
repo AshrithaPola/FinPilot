@@ -37,8 +37,8 @@ from bank.synthetic import END as DATA_THROUGH
 from bank.synthetic import START as DATA_FROM
 from config import get_settings
 from deps import get_accounts_tools, get_llm, get_market_tools, get_store
-from engine.checks import (VALIDATOR_SCHEMA, VALIDATOR_SYSTEM, VALIDATORS, code_checks, missing_calculation,
-                           verdict_from)
+from engine.checks import (_CUSTOMER, VALIDATOR_SCHEMA, VALIDATOR_SYSTEM, VALIDATORS, code_checks,
+                           missing_calculation, verdict_from)
 from engine.executor import Executor
 from engine.plan import PLAN_SCHEMA, REPLAN_SYSTEM, Plan, parse_plan, planner_prompt, prefer_fee_schedule
 from graph.redaction import redact
@@ -57,6 +57,8 @@ NO_CUSTOMER_DATA = ("Staff accounts don't have customer data, so I can't look up
                     "fees. I can answer from the bank's documents and market data.")
 REFUSED = ("I can't give you an answer I could check against your accounts and the bank's documents "
            "({reason}). Please try asking again, more narrowly, or contact the bank.")
+# A customer's refused question that names another customer's id: say why, not a validator's reason.
+OTHER_CUSTOMER = "I can only show your own accounts and the bank's documents."
 REFUSAL_REASONS = {"gatekeeper": "it didn't answer your question",
                    "auditor": "part of it wasn't supported by your data or the documents",
                    "strategist": "it went beyond what I can help with here"}
@@ -358,8 +360,10 @@ async def check_node(state: EngineState) -> dict:
         return out
     if not state.get("feedback"):
         return {**out, "feedback": "; ".join(f"{n}: {verdict[n]['reason']}" for n in failed)}
-    return {**out, "answer": REFUSED.format(reason=REFUSAL_REASONS[failed[0]]), "citations": [],
-            "outcome": "refused_unverified"}
+    own = getattr(state.get("access"), "customer_id", None)
+    other = own and any(c != own for c in _CUSTOMER.findall(state["question"]))
+    return {**out, "answer": OTHER_CUSTOMER if other else REFUSED.format(reason=REFUSAL_REASONS[failed[0]]),
+            "citations": [], "outcome": "refused_unverified"}
 
 
 def _after_check(state: EngineState) -> str:

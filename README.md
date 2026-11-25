@@ -92,7 +92,7 @@ A typical question takes three LLM calls; the rewrite, the re-plan and the regen
 
 ## Results
 
-Results are pending the ablation runs; the table goes here once there are real numbers.
+Results are pending the ablation runs; the table goes here once there are real numbers. A question passes only if it has the right outcome, every expected number, its expected facts fully covered, a faithful answer and no canary leaks.
 
 ## Design decisions
 

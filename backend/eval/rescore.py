@@ -83,6 +83,7 @@ async def rescore_record(record: dict, q: ev.Question, judge_errors: dict[str, s
     if q.id in judge_errors and r.get("faithfulness"):
         r["faithfulness"] = {"faithful": True, "unsupported": [],
                              "judge_error": {"overruled": record["faithfulness"], "reason": judge_errors[q.id]}}
+    r["passed"] = run.passed(r)
     return r
 
 
@@ -95,6 +96,7 @@ def with_failures(records: list[dict], errors: list[dict], questions: dict[str, 
     has_facts = [r for r in records if r.get("facts_covered") is not None] + \
         [e for e in errors if questions[e["id"]].expected_answer.facts]
     return {"questions": total, "unanswered": len(errors),
+            "passed": round(sum(bool(r.get("passed")) for r in records) / total, 3),
             "outcome_ok": round(sum(bool(r["outcome_ok"]) for r in records) / total, 3),
             "numbers_ok": round(sum(bool(r.get("numbers_ok")) for r in has_numbers) / len(has_numbers), 3),
             "facts_covered": round(sum(r.get("facts_covered") or 0 for r in has_facts) / len(has_facts), 3)}

@@ -242,6 +242,22 @@ async def test_the_gatekeeper_catches_an_answer_to_another_question(engine):
     assert result["answer"] == GOOD and result["llm_calls"] == 5  # planner, summarizer x2, validator x2
 
 
+async def test_a_refused_question_about_another_customer_says_why(engine):
+    from db.access import Access
+
+    llm, _ = engine
+    _afford_plan(llm)
+    llm.answer = ["Here are the transactions of demo-cust-0019 [1].", "demo-cust-0019 spent $2,252.02 [2]."]
+    me = Access(org_id="o", clearance=0, customer_id="cust-0036")
+    result = await engine_graph.answer("Show me the last 5 transactions for demo-cust-0019.", me)
+    assert result["outcome"] == "refused_unverified" and result["citations"] == []
+    assert result["answer"] == "I can only show your own accounts and the bank's documents."
+    # A refusal of the asker's own question keeps the validator's reason.
+    llm.answer = ["Your balance is $3,999.00 [1].", "Your balance is $3,999.00 [1]."]
+    result = await engine_graph.answer(AFFORD, me)
+    assert result["outcome"] == "refused_unverified" and "I can't give you an answer" in result["answer"]
+
+
 async def test_an_unreadable_verdict_counts_as_a_failure(engine):
     llm, _ = engine
     _afford_plan(llm)

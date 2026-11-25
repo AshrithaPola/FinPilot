@@ -104,6 +104,20 @@ def score_outcome(expected: str, outcome: str) -> tuple[str, bool]:
     return group, group == expected_group or (expected_group in DECLINED and group in DECLINED)
 
 
+def passed(r: dict) -> bool | None:
+    """The one definition of a pass (strict): the right outcome, every expected number,
+    the expected facts fully covered, judged faithful, and no canary leaks. A measure a
+    question doesn't have (no numbers or facts, nothing to be faithful to) isn't held
+    against it. None for a record the judge didn't score (--no-judge)."""
+    if r.get("error"):
+        return False
+    if "facts" not in r:
+        return None
+    faith = r.get("faithfulness")
+    return bool(r["outcome_ok"] and r.get("numbers_ok") is not False and r.get("facts_covered") in (None, 1)
+                and (faith is None or faith["faithful"]) and not r["canary_leaks"])
+
+
 def number_found(value: float, text: str) -> bool:
     """The figure as written in the answer: money with cents or without, a
     percent, or a whole number standing alone (60 days, 2 fees)."""
@@ -232,6 +246,7 @@ async def run_question(q: ev.Question, judge: bool = True) -> dict:
                 record["faithfulness"] = None  # a fixed reply or a refusal: nothing to be faithful to
         record["judge"] = {"calls": sum(t["calls"] for t in usage["tokens_per_role"].values()),
                            "tokens_by_role": usage["tokens_per_role"]}
+    record["passed"] = passed(record)
     record["wall_s"] = round(time.perf_counter() - started, 2)
     return record
 
@@ -303,7 +318,7 @@ def summarize(records: list[dict]) -> dict:
     def block(rs):
         retrieval = [r["retrieval"] for r in rs if r["retrieval"]]
         faith = [r["faithfulness"]["faithful"] for r in rs if r.get("faithfulness")]
-        return {"questions": len(rs), "outcome_ok": rate(rs, "outcome_ok"), "numbers_ok": rate(rs, "numbers_ok"),
+        return {"questions": len(rs), "passed": rate(rs, "passed"), "outcome_ok": rate(rs, "outcome_ok"), "numbers_ok": rate(rs, "numbers_ok"),
                 "facts_covered": rate(rs, "facts_covered"),
                 "gold_cited": round(sum(r["gold_cited"]["cited"] for r in rs)
                                     / max(1, sum(r["gold_cited"]["of"] for r in rs)), 3),

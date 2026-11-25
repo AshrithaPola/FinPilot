@@ -116,3 +116,15 @@ def test_the_capture_keeps_every_draft_the_summarizer_wrote():
         capture.on_chain_end({"answer": draft}, run_id=n)
     capture.on_chain_end({"answer": "not the summarizer"}, run_id=99)
     assert capture.drafts == ["A $60.44 payment [1].", "A $604.42 payment [1]."]
+
+
+def test_a_pass_is_strict():
+    good = {"outcome_ok": True, "numbers_ok": True, "facts": [{}], "facts_covered": 1.0,
+            "faithfulness": {"faithful": True}, "canary_leaks": 0}
+    assert run.passed(good) is True
+    # A refusal that was expected: no numbers, no facts, nothing to be faithful to.
+    assert run.passed({**good, "numbers_ok": None, "facts": [], "facts_covered": None, "faithfulness": None})
+    for bad in ({"outcome_ok": False}, {"numbers_ok": False}, {"facts_covered": 0.5},
+                {"faithfulness": {"faithful": False}}, {"canary_leaks": 1}, {"error": "503"}):
+        assert run.passed({**good, **bad}) is False, bad
+    assert run.passed({k: v for k, v in good.items() if k != "facts"}) is None  # not judged
