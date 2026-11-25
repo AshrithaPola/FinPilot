@@ -95,8 +95,20 @@ def parse_fred(series_id: str, payload: dict) -> list[dict]:
 # --- fetching and storing -------------------------------------------------------
 
 def _get(session, url: str, **kwargs) -> dict:
-    response = session.get(url, timeout=60, **kwargs)
-    response.raise_for_status()
+    """API keys travel in the query string, and requests' errors quote the full URL:
+    a failure names only the host, the error type and the HTTP status."""
+    import requests
+    from urllib.parse import urlsplit
+
+    failed = None
+    try:
+        response = session.get(url, timeout=60, **kwargs)
+        response.raise_for_status()
+    except requests.RequestException as e:
+        status = getattr(e.response, "status_code", None)
+        failed = f"Request to {urlsplit(url).netloc} failed: {type(e).__name__}" + (f" (HTTP {status})" if status else "")
+    if failed:  # raised outside the except block, so the original error isn't attached at all
+        raise RuntimeError(failed)
     return response.json()
 
 

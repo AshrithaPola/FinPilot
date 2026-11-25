@@ -137,3 +137,26 @@ def test_the_planner_sees_each_arguments_allowed_values_and_fee_aliases_are_acce
 
     with pytest.raises(ValidationError):
         FeeArgs.model_validate({"fee_type": "bogus"})  # anything else is still refused
+
+
+@pytest.mark.parametrize("status", [None, 500])
+def test_a_failed_request_never_shows_the_api_key(status):
+    import requests
+    from bank.market import _get
+
+    key = "SECRET-KEY-123"
+
+    class Session:
+        def get(self, url, **kwargs):
+            full = requests.Request("GET", url, params=kwargs.get("params")).prepare().url
+            if status is None:
+                raise requests.ConnectionError(f"Max retries exceeded with url: {full}")
+            response = requests.Response()
+            response.status_code, response.url, response.reason = status, full, "Server Error"
+            return response
+
+    with pytest.raises(RuntimeError) as caught:
+        _get(Session(), "https://www.alphavantage.co/query", params={"symbol": "VTI", "apikey": key})
+    shown = str(caught.value) + repr(caught.value.__cause__) + repr(caught.value.__context__)
+    assert key not in shown and "www.alphavantage.co" in shown
+    assert caught.value.__context__ is None and caught.value.__cause__ is None  # nothing attached
