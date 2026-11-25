@@ -10,6 +10,7 @@ set -uo pipefail  # no -e: carry on past what's already gone
 PROJECT_ID="${PROJECT_ID:?Set PROJECT_ID}"
 REGION="${REGION:-us-central1}"
 APPLY=false; [[ "${1:-}" == "--apply" ]] && APPLY=true
+source "$(dirname "$0")/gcp_test_mode.sh"  # test mode: only the fake gcloud
 run() { if $APPLY; then "$@"; else printf '+ %q' "$1"; shift; printf ' %q' "$@"; echo; fi; }
 
 for service in finpilot-frontend finpilot-backend; do

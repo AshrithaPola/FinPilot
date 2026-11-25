@@ -13,6 +13,9 @@ Endpoints:
     GET  /me            — who the token belongs to and whether they're set up
     GET  /health        — liveness
 
+Locally FastAPI also serves /docs, /redoc and /openapi.json; on Cloud Run
+(K_SERVICE set) those are off, so the deployed API doesn't publish its schema.
+
 Every endpoint except /me and /health requires a signed-in, set-up user
 (auth.get_principal: 401 without a valid token, 403 if not set up); /admin/*
 also checks with Firebase that the token wasn't revoked.
@@ -20,6 +23,7 @@ also checks with Firebase that the token wasn't revoked.
 import asyncio
 import json
 import logging
+import os
 import re
 from contextlib import asynccontextmanager
 from functools import partial
@@ -65,7 +69,10 @@ async def lifespan(app: FastAPI):
     observability.flush()  # what Langfuse hasn't exported yet
 
 
-app = FastAPI(title="FinPilot API", lifespan=lifespan)
+# Cloud Run sets K_SERVICE: the deployed API doesn't publish its schema
+# (/docs, /redoc, /openapi.json); a local run keeps them.
+_NO_DOCS = {"docs_url": None, "redoc_url": None, "openapi_url": None} if os.environ.get("K_SERVICE") else {}
+app = FastAPI(title="FinPilot API", lifespan=lifespan, **_NO_DOCS)
 
 app.add_middleware(
     CORSMiddleware,

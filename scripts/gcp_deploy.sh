@@ -24,8 +24,17 @@ REPO="$REGION-docker.pkg.dev/$PROJECT_ID/finpilot"
 TAG="$(git -C "$ROOT" rev-parse --short HEAD)"
 SA="finpilot-backend@$PROJECT_ID.iam.gserviceaccount.com"
 
+ENV_FILE="${ENV_FILE:-$ROOT/.env}"
+BIND_WAIT_S="${BIND_WAIT_S:-10}"
+
+# Test mode: only the fake gcloud, and secrets from a test .env, never the real ones.
+source "$ROOT/scripts/gcp_test_mode.sh"
+if [[ -n "${FINPILOT_FAKE_GCLOUD:-}" && "$ENV_FILE" -ef "$ROOT/.env" ]]; then
+  echo "Test mode: set ENV_FILE to a test .env. Refusing to run." >&2; exit 2
+fi
+
 run() { if $APPLY; then "$@"; else printf '+ %q' "$1"; shift; printf ' %q' "$@"; echo; fi; }
-env_value() { grep -E "^$1=" "$ROOT/.env" | tail -1 | cut -d= -f2- || true; }
+env_value() { grep -E "^$1=" "$ENV_FILE" | tail -1 | cut -d= -f2- || true; }
 
 # A create that may already exist from an earlier run: kept; any other failure stops the script.
 create() {
@@ -43,15 +52,15 @@ bind() {
   local attempt
   for attempt in 1 2 3 4 5 6; do
     "$@" >/dev/null 2>&1 && return
-    echo "IAM binding not accepted yet (attempt $attempt of 6); retrying in 10 s" >&2
-    sleep 10
+    echo "IAM binding not accepted yet (attempt $attempt of 6); retrying in $BIND_WAIT_S s" >&2
+    sleep "$BIND_WAIT_S"
   done
   "$@" >/dev/null  # the last try, with its error shown
 }
 
 # Every value the deploy needs, checked before anything is created.
 missing=()
-for key in NEON_APP_DATABASE_URL DEPLOY_GEMINI_API_KEY OBSERVABILITY_SALT LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY \
+for key in NEON_APP_DATABASE_URL DEPLOY_GEMINI_API_KEY DEPLOY_GEMINI_PROJECT_ID OBSERVABILITY_SALT LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY \
            LANGFUSE_BASE_URL GOOGLE_APPLICATION_CREDENTIALS FIREBASE_PROJECT_ID VITE_FIREBASE_API_KEY \
            VITE_FIREBASE_AUTH_DOMAIN VITE_FIREBASE_PROJECT_ID VITE_FIREBASE_APP_ID; do
   [[ -n "$(env_value "$key")" ]] || missing+=("$key")
@@ -59,6 +68,10 @@ done
 [[ -f "$(env_value GOOGLE_APPLICATION_CREDENTIALS)" ]] || missing+=("the Firebase key file GOOGLE_APPLICATION_CREDENTIALS names")
 if [[ -n "$(env_value DEPLOY_GEMINI_API_KEY)" && "$(env_value DEPLOY_GEMINI_API_KEY)" == "$(env_value GEMINI_API_KEY)" ]]; then
   missing+=("a DEPLOY_GEMINI_API_KEY different from the eval key GEMINI_API_KEY")
+fi
+KEY_PROJECT="$(env_value DEPLOY_GEMINI_PROJECT_ID)"
+if [[ -n "$KEY_PROJECT" && "$KEY_PROJECT" == "$PROJECT_ID" ]]; then
+  missing+=("a DEPLOY_GEMINI_PROJECT_ID other than PROJECT_ID (the deploy project has billing on)")
 fi
 if (( ${#missing[@]} )); then
   printf '.env lacks: %s\n' "${missing[@]}" >&2
@@ -69,6 +82,19 @@ fi
 if $APPLY; then
   [[ "$(gcloud billing projects describe "$PROJECT_ID" --format='value(billingEnabled)')" == "True" ]] || {
     echo "Billing is not enabled on $PROJECT_ID. This script never turns it on: do that yourself first." >&2; exit 1; }
+  # A Gemini key takes on its project's billing status: with billing on, demo
+  # traffic is billed per token instead of hitting the free tier's limits.
+  if key_billing="$(gcloud billing projects describe "$KEY_PROJECT" --format='value(billingEnabled)' 2>&1)" \
+     && [[ "$key_billing" == True || "$key_billing" == False ]]; then
+    [[ "$key_billing" == False ]] || {
+      echo "Billing is on for $KEY_PROJECT, the deploy key's project: the key would be billed per token. Use a key from a project with billing off." >&2; exit 1; }
+  elif [[ "${DEPLOY_KEY_PROJECT_UNBILLED:-}" == yes ]]; then
+    echo "Could not read billing for $KEY_PROJECT ($key_billing); continuing because DEPLOY_KEY_PROJECT_UNBILLED=yes." >&2
+  else
+    echo "Could not read billing for $KEY_PROJECT, the deploy key's project: $key_billing" >&2
+    echo "Refusing: without that check the key may be billed per token. If you know billing is off there, set DEPLOY_KEY_PROJECT_UNBILLED=yes." >&2
+    exit 1
+  fi
 fi
 
 run gcloud services enable run.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com \

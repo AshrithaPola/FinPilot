@@ -11,13 +11,19 @@ PROJECT_ID=my-project scripts/gcp_teardown.sh --apply  # removes everything depl
 ```
 
 Before `--apply`: run `gcloud auth login` (the saved sign-in on the dev
-machine had expired on 2026-11-24), and put `DEPLOY_GEMINI_API_KEY` in `.env`.
+machine had expired on 2026-11-24), and put `DEPLOY_GEMINI_API_KEY` and
+`DEPLOY_GEMINI_PROJECT_ID` (the project that key was created in) in `.env`.
 
 What the deploy script does:
 
 - **Checks first:** it stops before creating anything if a value it needs is
   missing from `.env`, or if `DEPLOY_GEMINI_API_KEY` is the same as the eval
   key `GEMINI_API_KEY`.
+- **The deploy key's project must have billing off:** `DEPLOY_GEMINI_PROJECT_ID`
+  must differ from `PROJECT_ID`, and `gcloud billing projects describe` must
+  show billing off for it. If that lookup fails (for example, no permission on
+  that project), the script prints the error and refuses, unless you set
+  `DEPLOY_KEY_PROJECT_UNBILLED=yes` in the shell to say you checked it yourself.
 - **Billing:** it stops if the project has no billing; it never turns billing on.
 - **Secrets:** six values from `.env` go into Secret Manager (the Neon app URL,
   the deployed app's own Gemini key `DEPLOY_GEMINI_API_KEY`, observability salt,
@@ -44,6 +50,13 @@ What the deploy script does:
   Administrator or Costs Manager role on the billing account; the teardown
   deletes it.
 - **Services:** both services deploy with max instances 2, which caps the bill.
+- **No public API schema:** on Cloud Run (which sets `K_SERVICE`) the backend
+  serves no `/docs`, `/redoc` or `/openapi.json`; a local run keeps them.
+- **Tests never reach GCP:** `backend/tests/unit/test_gcp_deploy.py` runs both
+  scripts with `--apply` against `backend/tests/fixtures/fake_gcloud`. In that
+  test mode (`FINPILOT_FAKE_GCLOUD` set, `scripts/gcp_test_mode.sh`) each script
+  refuses to run unless the gcloud on PATH is the fake; the deploy also needs
+  `ENV_FILE` to point to a test `.env`, not the real one.
 
 Two steps stay manual:
 
@@ -61,8 +74,11 @@ Cloud Run (both services), Artifact Registry, Secret Manager and Cloud Build.
 **What it excludes:**
 
 - **Gemini calls:** the app's model calls, about 3 per question. They stay on
-  the Gemini API free tier, whose daily limits cap usage; a paid key would bill
-  per token on top of this estimate.
+  the Gemini API free tier, whose daily limits cap usage. A Gemini key takes on
+  its project's billing status: a key from a project with billing on is billed
+  per token, on top of this estimate. So the deploy key must come from a
+  project with billing off, which `--apply` checks
+  ([Gemini API billing](https://ai.google.dev/gemini-api/docs/billing)).
 - **Neon:** the database stays on its current plan, billed by Neon, not Google.
 - **Firebase:** sign-in stays on its current plan.
 - Langfuse (traces) and network egress: Langfuse is billed separately, and the
@@ -117,8 +133,9 @@ Things that change the estimate:
 - **Image storage:** the cleanup policy keeps 3 versions of each image, so
   storage stays near the line above however often you deploy. Without it, ten
   versions of a 1.5 GB image would come to about $1.50 a month.
-- **Shared free tier:** it's per billing account, so other projects on the same
-  account use it up too.
+- **Shared free tier:** the Cloud Run free tier (like the others above) is per
+  billing account, not per project, so other projects on the same billing
+  account use it up too, and this estimate assumes none of it is used.
 - **Gemini and Neon aren't counted:** both stay on their free tiers. At 5,000
   questions a month (about 3 model calls each), Gemini's free-tier daily
   limits, not Cloud Run, are the ceiling.

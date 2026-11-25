@@ -6,3 +6,6 @@ backend/eval/*.json text eol=lf
 *.pdf binary
 *.png binary
 *.xlsx binary
+# Shell scripts run under bash, which chokes on CRLF.
+*.sh text eol=lf
+backend/tests/fixtures/fake_gcloud text eol=lf

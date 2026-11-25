@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# FINPILOT-FAKE-GCLOUD: a fake gcloud for testing scripts/gcp_deploy.sh --apply offline: logs every call,
+# says "already exists" to creates, refuses the first two IAM bindings, and
+# answers the describes the script reads.
+echo "gcloud $*" >> "$FAKE_LOG"
+case "$*" in
+  "billing projects describe key-proj "*)  # the deploy key's project: FAKE_KEY_BILLING on|off|denied
+    case "${FAKE_KEY_BILLING:-off}" in on) echo True ;; off) echo False ;;
+      *) echo "ERROR: (gcloud) PERMISSION_DENIED: the caller does not have permission" >&2; exit 1 ;; esac ;;
+  "billing projects describe"*billingEnabled*) echo True ;;
+  "billing projects describe"*billingAccountName*) echo billingAccounts/000000-000000-000000 ;;
+  "billing budgets list"*) [[ -n "${FAKE_BUDGET_EXISTS:-}" ]] && echo billingAccounts/x/budgets/y ;;
+  "artifacts repositories create"*|"iam service-accounts create"*|"secrets create"*)
+    echo "ERROR: (gcloud) ALREADY_EXISTS: the resource already exists" >&2; exit 1 ;;
+  "secrets versions access"*) [[ "$*" == *database-url* ]] && printf 'postgresql://app@db/x' ;;
+  "secrets add-iam-policy-binding"*)
+    n=$(( $(cat "$FAKE_LOG.iam" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE_LOG.iam"
+    (( n <= 2 )) && { echo "ERROR: service account does not exist" >&2; exit 1; } ;;
+  "run services describe finpilot-backend"*) echo https://finpilot-backend-abc123-uc.a.run.app ;;
+  "run services describe finpilot-frontend"*) echo https://finpilot-frontend-abc123-uc.a.run.app ;;
+  "secrets versions add"*) echo "  data: $(cat)" >> "$FAKE_LOG" ;;
+esac
+exit 0
