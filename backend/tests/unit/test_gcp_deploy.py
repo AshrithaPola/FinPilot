@@ -46,7 +46,7 @@ def _exe(path, text):
 
 def _deploy(tmp_path, *, env_overrides=None, decoy_first=False, env_file=True, script="gcp_deploy.sh"):
     key = tmp_path / "firebase-key.json"
-    key.write_text('{"type": "service_account"}')
+    key.write_text('{"fake": "stand-in Firebase key file"}')
     values = {**ENV, "GOOGLE_APPLICATION_CREDENTIALS": key.as_posix(), **(env_overrides or {})}
     (tmp_path / "test.env").write_text("".join(f"{k}={v}\n" for k, v in values.items()), newline="\n")
     fake = _exe(tmp_path / "fake" / "gcloud", FAKE.read_text())
