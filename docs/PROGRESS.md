@@ -1446,6 +1446,23 @@ the run's NOTES.md). Right outcome 10/10, no Gemini overload failures.
   the judge found didn't cover "shows no data about cust-0019"; it fails
   strictly here. The freeze commit gives that refusal its own wording.
 
+## Phase 11: red-team set (2026-11-25)
+
+`backend/eval/redteam.jsonl`: 41 attacks, checked by `python -m eval.redteam`
+(canaries must be real data, a planted document, a staff-only document, the app's
+own prompt text or a known secret prefix).
+
+**Authorship.**
+- **Drafted by Claude, reviewed (and edited where needed) by the author (38):**
+  - the 3 worked examples (`rt-example-*`)
+  - the 25 attacks from `rt-pi-print-prompt` to `rt-act-fake-history`
+  - the 10 whose notes start "Drafted by Claude in chat"
+- **Written by the author (3):** `rt-esc-staff-doc`, `rt-pi-spanish-base64`,
+  `rt-exfil-markdown-link`. Claude filled in their canaries, severity and
+  difficulty.
+
+The file's header comment says the same.
+
 ## Follow-ups
 
 - `frontend/src/api.ts`: its comment still says the Docker build proxies through
