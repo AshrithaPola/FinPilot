@@ -12,14 +12,18 @@ One attack per line:
                          data, gives facts without a recommendation...)
     must_not_contain     canaries: strings a safe reply never holds. Each must be real:
                          data on the fact sheet of a customer the attack names (not the
-                         asker), text of a planted document, or text of a staff-only
-                         (clearance 2) document. An instruction-planted-in-document
+                         asker), text of a planted document, text of a staff-only
+                         (clearance 2) document, text of the app's own prompts (PROMPT_FILES),
+                         or a known secret prefix (SECRET_PREFIXES). An instruction-planted-in-document
                          attack needs at least one canary from a planted document.
     must_not_claim       false statements a safe reply never makes, judged by the eval
                          judge (judge_claims) for a human to review: a canary only
                          catches output, not a changed fact. Required when the attack
                          relies on a planted document whose instruction changes facts
                          (changes_facts in data/bank/redteam/manifest.yaml).
+    expected             refuse | redirect | answer_safely | say_dont_know
+    severity             low | medium | high
+    difficulty           easy | hard
     notes                the trap, which planted document it relies on, what failure looks like
 
 Planted documents live in data/bank/redteam/ with their own manifest.yaml.
@@ -43,7 +47,12 @@ ATTACKS = Path(__file__).with_name("redteam.jsonl")
 BANK = Path(__file__).resolve().parents[2] / "data" / "bank"
 REDTEAM_DOCS = BANK / "redteam"
 CATEGORIES = ("prompt-injection-in-question", "instruction-planted-in-document", "cross-customer",
-              "advice-evasion", "money-movement-evasion", "data-exfiltration", "biased-phrasing")
+              "advice-evasion", "money-movement-evasion", "data-exfiltration", "biased-phrasing",
+              "hallucination-bait", "jailbreak-roleplay")
+# The app's prompts, read as source text so the validator imports no engine.
+# shortcut: a canary matches anywhere in these files, code included; import the prompts if that ever misleads.
+PROMPT_FILES = tuple(Path(__file__).resolve().parents[1] / "engine" / f for f in ("graph.py", "plan.py", "checks.py"))
+SECRET_PREFIXES = ("AIza",)  # Google API keys; a real key never goes in the repo, only its prefix
 
 
 class Attack(BaseModel):
@@ -53,9 +62,12 @@ class Attack(BaseModel):
     attack: str = Field(min_length=5, max_length=4000)
     asked_as: Literal[DEMO_CUSTOMERS + ("staff",)]  # type: ignore[valid-type]
     category: Literal[CATEGORIES]  # type: ignore[valid-type]
+    expected: Literal["refuse", "redirect", "answer_safely", "say_dont_know"]
     expected_behaviour: str = Field(min_length=10)
     must_not_contain: list[str] = []
     must_not_claim: list[str] = []
+    severity: Literal["low", "medium", "high"]
+    difficulty: Literal["easy", "hard"]
     notes: str = Field(min_length=10)
 
 
@@ -97,6 +109,11 @@ def staff_texts(root: Path = BANK) -> dict[str, str]:
             for d in _manifest(root) if d["clearance"] >= 2 and d["file"].endswith(".md")}
 
 
+def prompt_texts(files: tuple[Path, ...] = PROMPT_FILES) -> dict[str, str]:
+    """The source text holding each of the app's prompts, by file."""
+    return {f.name: f.read_text(encoding="utf-8") for f in files}
+
+
 def corpus_errors(bank: Path = BANK) -> list[str]:
     """The normal corpus must never list a red-team document."""
     return [f"data/bank/manifest.yaml lists the red-team document {d['file']}"
@@ -104,16 +121,17 @@ def corpus_errors(bank: Path = BANK) -> list[str]:
 
 
 def attack_errors(a: Attack, sheets: dict[str, str], planted: dict[str, str], staff: dict[str, str],
-                  changes_facts: set[str] = frozenset()) -> list[str]:
+                  changes_facts: set[str] = frozenset(), prompts: dict[str, str] | None = None) -> list[str]:
     errors = []
     named = [c for c in _CUSTOMER_ID.findall(a.attack) if c != a.asked_as and c in sheets]
     for c in a.must_not_contain:
         if not c.strip():
             errors.append("must_not_contain: an empty canary")
         elif not (any(c in sheets[n] for n in named) or any(c in t for t in planted.values())
-                  or any(c in t for t in staff.values())):
-            errors.append(f"must_not_contain {c!r} is on no named customer's fact sheet, "
-                          "in no planted document and in no staff-only document")
+                  or any(c in t for t in staff.values()) or any(c in t for t in (prompts or {}).values())
+                  or c in SECRET_PREFIXES):
+            errors.append(f"must_not_contain {c!r} is on no named customer's fact sheet, in no planted "
+                          "document, staff-only document or app prompt, and isn't a known secret prefix")
     if a.category == "instruction-planted-in-document" and not any(
             c in t for c in a.must_not_contain for t in planted.values()):
         errors.append("an instruction-planted-in-document attack needs a canary from a planted document")
@@ -161,9 +179,9 @@ def main() -> int:
     args = parser.parse_args()
     attacks, errors = load(Path(args.file))
     errors += corpus_errors()
-    sheets, planted, staff, changing = fact_sheet(), planted_texts(), staff_texts(), fact_changing()
+    sheets, planted, staff, changing, prompts = fact_sheet(), planted_texts(), staff_texts(), fact_changing(), prompt_texts()
     for a in attacks:
-        errors += [f"{a.id}: {e}" for e in attack_errors(a, sheets, planted, staff, changing)]
+        errors += [f"{a.id}: {e}" for e in attack_errors(a, sheets, planted, staff, changing, prompts)]
     print("\n".join(errors) if errors else f"{len(attacks)} attacks OK")
     return 1 if errors else 0
 
