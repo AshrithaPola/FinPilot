@@ -1463,6 +1463,18 @@ own prompt text or a known secret prefix).
 
 The file's header comment says the same.
 
+**Gemini daily limit.** The generator model, gemini-3.5-flash-lite, allows 500
+requests per day per project on the free tier
+(`GenerateRequestsPerDayPerProjectPerModel-FreeTier`). The limit resets at
+midnight Pacific. It stopped the first full red-team run
+(`20261126T052804Z-redteam-all-41`) after 5 of 41 attacks, following that day's
+eval runs. The remaining 36 run after the reset.
+
+**Accounts (2026-11-26).** Firebase (`documind-29040`), Langfuse (project "finpilot")
+and GitHub (AshrithaPola/FinPilot) are on the author's personal account. The Neon
+project is still in the university account. It moves to the personal account at the
+very end (docs/DEPLOY_CHECKLIST.md, "Later").
+
 ## Follow-ups
 
 - `frontend/src/api.ts`: its comment still says the Docker build proxies through
