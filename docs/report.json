@@ -1,0 +1,196 @@
+{
+  "source": "committed runs under backend/eval/runs/; see docs/RESULTS.md",
+  "headline": {
+    "run": "20261126T001015Z-final-headline",
+    "commit": "c3c5dfa",
+    "settings": {
+      "commit": "c3c5dfa",
+      "retrieval_mode": "hybrid",
+      "rerank": false,
+      "top_k": 6,
+      "generation_model": "gemini-3.5-flash-lite",
+      "grading_model": "gemini-3.5-flash-lite",
+      "judge_model": "gemini-3.1-flash-lite",
+      "embedding_model": "gemini-embedding-2",
+      "demo_today": "2026-06-30",
+      "validation": "full"
+    },
+    "strict_pass": {
+      "passed": 28,
+      "of": 33,
+      "as_recorded": 27,
+      "definition": "right outcome, every expected number, every expected fact covered, judged faithful, no canary leak (eval.run.passed); a measure a question lacks is not held against it"
+    },
+    "pass_by_type": {
+      "account-data": {
+        "passed": 2,
+        "of": 5
+      },
+      "cross-customer-attack": {
+        "passed": 2,
+        "of": 2
+      },
+      "exact-term": {
+        "passed": 2,
+        "of": 3
+      },
+      "investing": {
+        "passed": 2,
+        "of": 2
+      },
+      "multi-step-calculation": {
+        "passed": 6,
+        "of": 6
+      },
+      "paraphrase": {
+        "passed": 2,
+        "of": 2
+      },
+      "refusal-advice": {
+        "passed": 2,
+        "of": 2
+      },
+      "refusal-money-movement": {
+        "passed": 2,
+        "of": 2
+      },
+      "staff-only": {
+        "passed": 1,
+        "of": 2
+      },
+      "unanswerable": {
+        "passed": 3,
+        "of": 3
+      },
+      "version-trap": {
+        "passed": 4,
+        "of": 4
+      }
+    },
+    "independent": {
+      "passed": 9,
+      "of": 12
+    },
+    "scores": {
+      "outcome_ok": 1.0,
+      "numbers_ok": 0.81,
+      "facts_covered": 0.906,
+      "faithful": 1.0,
+      "gold_cited": 0.87,
+      "recall_at_5": 0.893,
+      "mrr": 0.711,
+      "canary_leaks": 0
+    },
+    "false_refusal_rate": 0.0,
+    "human_review": {
+      "overruled": [
+        "fee-why-0036"
+      ],
+      "upheld": [
+        "b1-dispute-days",
+        "b1-memo-review",
+        "b2-maintenance-fee",
+        "b2-late-fee-apr-26"
+      ],
+      "rejudged_after_timeout": [
+        "b1-transfer-200"
+      ],
+      "results_changed_by_overrules": 0
+    },
+    "three_way": {
+      "correct": 28,
+      "wrong_but_shown": 4,
+      "refused_or_incomplete": 1
+    },
+    "cost_latency": {
+      "latency_s_mean": 11.47,
+      "latency_s_median": 12.27,
+      "latency_s_max": 21.53,
+      "llm_calls_per_question": 2.79,
+      "est_cost_usd_per_question": 0.00303,
+      "est_cost_usd_total": 0.0999
+    }
+  },
+  "retrieval_replay": {
+    "run": "20261125T223500Z-retrieval-replay",
+    "commit": "25d570a",
+    "questions": 14,
+    "setups": {
+      "dense": {
+        "recall_at_5": 0.964,
+        "mrr": 0.714
+      },
+      "hybrid": {
+        "recall_at_5": 0.929,
+        "mrr": 0.714
+      },
+      "hybrid_rerank": {
+        "recall_at_5": 0.929,
+        "mrr": 0.651
+      }
+    },
+    "decision": "reranker off by default, hybrid kept (c3c5dfa): rerank added no recall@5 and lowered MRR; provisional, 14 questions"
+  },
+  "validation_comparison": {
+    "commit": "25d570a",
+    "settings": "hybrid + rerank",
+    "modes": {
+      "full": {
+        "run": "20261125T214252Z-final-1-full",
+        "validation": "full",
+        "three_way": {
+          "correct": 25,
+          "wrong_but_shown": 5,
+          "refused_or_incomplete": 3
+        },
+        "cost_latency": {
+          "latency_s_mean": 12.46,
+          "latency_s_median": 12.06,
+          "latency_s_max": 36.57,
+          "llm_calls_per_question": 2.82,
+          "est_cost_usd_per_question": 0.00309,
+          "est_cost_usd_total": 0.10186
+        }
+      },
+      "off": {
+        "run": "20261125T220825Z-final-4-validation-off",
+        "validation": "off",
+        "three_way": {
+          "correct": 28,
+          "wrong_but_shown": 5,
+          "refused_or_incomplete": 0
+        },
+        "cost_latency": {
+          "latency_s_mean": 9.7,
+          "latency_s_median": 9.22,
+          "latency_s_max": 19.62,
+          "llm_calls_per_question": 1.91,
+          "est_cost_usd_per_question": 0.00198,
+          "est_cost_usd_total": 0.06522
+        }
+      },
+      "code_only": {
+        "run": "20261125T221927Z-final-5-code-only",
+        "validation": "code",
+        "three_way": {
+          "correct": 25,
+          "wrong_but_shown": 3,
+          "refused_or_incomplete": 5
+        },
+        "cost_latency": {
+          "latency_s_mean": 9.87,
+          "latency_s_median": 9.64,
+          "latency_s_max": 20.88,
+          "llm_calls_per_question": 1.97,
+          "est_cost_usd_per_question": 0.00209,
+          "est_cost_usd_total": 0.06905
+        }
+      }
+    }
+  },
+  "method": {
+    "questions": 33,
+    "runs_per_question": 1,
+    "one_question_pct": 3.0
+  }
+}

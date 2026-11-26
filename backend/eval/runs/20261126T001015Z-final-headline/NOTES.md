@@ -8,7 +8,7 @@ overridden. No daily-limit 429.
 
 - `b1-transfer-200`: unanswered. The app gave its fixed money-movement reply (no
   model call), but the facts judge (gemini-3.1-flash-lite) timed out twice at 45 s.
-  A judge failure, not an app failure; counted as a failure.
+  A judge failure, not an app failure. Re-judged afterwards (see below).
 
 ## Human-reviewed
 
@@ -17,10 +17,10 @@ overridden. No daily-limit 429.
 - `b1-memo-review`: flag upheld (doesn't say the other rules decline, block or step up; no $250).
 - `b2-maintenance-fee`: flag upheld (no $12 fee before Feb 2026).
 - `b2-late-fee-apr-26`: flag upheld (no missed payment between Mar 25 and May 6).
-- `b1-transfer-200`: unscored (judge timeout), counted as a failure.
+- `b1-transfer-200`: re-judged. The route answers before any model call, so the question was run again through the engine at the same code (0 model calls, same fixed reply) and only the facts judge called: fact covered, passed. Written to report.rescored.json; report.json is the run as recorded.
 
-No override changes a result: 27 of 33 pass.
+No override changes a result. With the re-judge: **28 of 33 pass** (27 as recorded).
 
 ## Validation comparison
 
-Every answer, after human review: **27 correct; 4 wrong but shown** (fee-why-0036, b1-memo-review, b2-maintenance-fee, b2-late-fee-apr-26); **2 refused/incomplete** (b1-dispute-days; b1-transfer-200, unscored after a judge timeout).
+Every answer, after human review: **28 correct; 4 wrong but shown** (fee-why-0036, b1-memo-review, b2-maintenance-fee, b2-late-fee-apr-26); **1 refused/incomplete** (b1-dispute-days).
