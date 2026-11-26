@@ -205,5 +205,7 @@ validation and the other two modes (about 3 s and 1 call per question).
 - **Capacity.** Runs used rate-limited model endpoints. Timeouts and 503s were retried
   (the headline run had 5 timeouts and 1 retried 503). One judge timeout needed the
   re-judge described above.
+- **No conversation history**, so true multi-turn attacks are untested. The red-team set
+  only fakes an earlier turn inside a single message.
 - **The reranker decision rests on 14 questions.**
 - **Cost is an estimate** at list price, for the app's model calls only.
