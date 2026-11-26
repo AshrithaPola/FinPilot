@@ -24,3 +24,7 @@ Final run at eval-freeze (25d570a), strict pass (`eval.run.passed`). Hybrid + re
 
 - `b2-late-fees-year-0036`: Human review: five $25 late fees, $125.00, July 2025 to June 2026 are in the evidence
 - `fee-why-0036`: Human review: list_fees shows balance_after_cents -6749 for the Apr 6 overdraft fee
+
+## Validation comparison
+
+Every answer, after human review: **25 correct; 3 wrong but shown** (b1-memo-review, b2-maintenance-fee, b2-late-fees-why-0019); **5 refused/incomplete** (atm-fee-rise-0019, b1-dispute-days, b1-other-customer, b2-late-fee-apr-26, b2-overdrafts-may-6).

@@ -23,3 +23,7 @@ three setups.
 
 After these runs the reranker was turned off by default (hybrid stays), decided from
 the retrieval replay on this 14-question eval set.
+
+## Validation comparison
+
+Every answer, after human review: **25 correct; 5 wrong but shown** (fee-why-0036, b1-other-customer, b2-maintenance-fee, b2-late-fee-apr-26, b2-overdrafts-may-6); **3 refused/incomplete** (b1-dispute-days, b1-memo-review, b2-late-fees-why-0019).

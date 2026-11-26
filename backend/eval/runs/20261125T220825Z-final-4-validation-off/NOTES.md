@@ -24,3 +24,7 @@ Final run at eval-freeze (25d570a), strict pass (`eval.run.passed`). Hybrid + re
 - `b2-late-fees-year-0036`: Human review: five $25 late fees, $125.00, July 2025 to June 2026 are in the evidence
 - `b2-overdrafts-may-6`: Human review: matches the expected fact (the $604.42 card payment and $67.64 at QuickFuel)
 - `b2-maintenance-fee`: Human review: fee-schedule-2026 section 1 states the $250 direct-deposit waiver
+
+## Validation comparison
+
+Every answer, after human review: **28 correct; 5 wrong but shown** (fee-why-0036, b1-memo-review, b1-other-customer, b2-maintenance-fee, b2-late-fee-apr-26); **0 refused/incomplete**.
