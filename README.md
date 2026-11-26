@@ -5,6 +5,8 @@ in plain English ("Why was I charged $15 on April 6?", "Can I afford $1,200 this
 above $500?"). FinPilot plans the steps, runs them through tools as that customer, checks the answer
 before showing it, and cites every figure: their own accounts, the bank's documents, or public data.
 
+Tech: FastAPI · React/TypeScript · LangGraph + LangChain · Gemini · Neon Postgres + pgvector · Firebase Auth · Langfuse · GitHub Actions
+
 **What it refuses to do:**
 - **Move money or change accounts.** It's read-only; a transfer request gets a fixed reply.
 - **Give investment, tax or legal advice.** It gives the facts instead.
@@ -13,16 +15,8 @@ before showing it, and cites every figure: their own accounts, the bank's docume
 Bank staff get the same assistant over the bank's internal documents, with no access to customer
 accounts.
 
-**Status:** Phases 0 to 11 of 12 are built:
-- data and ingestion
-- Neon storage and retrieval
-- the tools
-- the reasoning engine and validation
-- tracing
-- the chat UI
-- evaluation and the red-team set
-
-Deployment (12) is scripted but not run. What each commit did, with measurements, is in
+**Status:** Phases 0 to 10 are complete; Phase 11 (red-team) is in progress; deployment (12) is
+scripted but not run. What each commit did, with measurements, is in
 [docs/PROGRESS.md](docs/PROGRESS.md); the plan is in [docs/FINPILOT_PLAN.md](docs/FINPILOT_PLAN.md).
 
 ## Screens
@@ -89,6 +83,12 @@ Under each answer, a "How I got this" panel shows:
 Only the list of public sources is committed, never the fetched text or prices. Licences and the
 terms checked for each source are in [data/SOURCES.md](data/SOURCES.md).
 
+## How it was built
+
+Built by Ashritha Pola with Claude Code as a pair programmer; commits carry co-author trailers. The
+eval questions and red-team attacks were drafted with AI help and reviewed by the author (see
+[RESULTS.md](docs/RESULTS.md) and the red-team file, [backend/eval/redteam.jsonl](backend/eval/redteam.jsonl)).
+
 ## Results
 
 From [docs/RESULTS.md](docs/RESULTS.md), the headline run at eval-freeze `c3c5dfa` with the app's
@@ -131,7 +131,7 @@ cp .env.example .env
 docker compose up --build
 ```
 
-- Web UI: http://localhost:3000 · API docs: http://localhost:8000/docs · Health: `GET /health`
+- Web UI: http://localhost:3000 · API docs: http://localhost:8000/docs (local only; off in production) · Health: `GET /health`
 - Sign-in uses Firebase email/password; a user also needs a row in Postgres (see
   "Setting up the first admin" below).
 
