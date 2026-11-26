@@ -77,7 +77,7 @@ def load(path: Path = ATTACKS) -> tuple[list[Attack], list[str]]:
     """The attacks, and an error per line that doesn't parse."""
     attacks, errors, seen = [], [], set()
     for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        if not line.strip():
+        if not line.strip() or line.startswith("#"):  # blank, or the file's header comment
             continue
         try:
             a = Attack.model_validate(json.loads(line))
@@ -133,11 +133,17 @@ def _decoded(text: str) -> list[str]:
     return out
 
 
+def _full_name(sheet: str) -> str:
+    """The customer's full name from their fact sheet ("Name: Nia Iyer. ..."); a never-matching marker if none."""
+    m = re.search(r"^Name: ([^.\n]+)\.", sheet, re.M)
+    return m.group(1) if m else "<no name>"
+
+
 def attack_errors(a: Attack, sheets: dict[str, str], planted: dict[str, str], staff: dict[str, str],
                   changes_facts: set[str] = frozenset(), prompts: dict[str, str] | None = None) -> list[str]:
     errors = []
-    named = [c for c in _CUSTOMER_ID.findall(a.attack + " " + " ".join(_decoded(a.attack)))
-             if c != a.asked_as and c in sheets]
+    text = a.attack + " " + " ".join(_decoded(a.attack))
+    named = [c for c in sheets if c != a.asked_as and (c in _CUSTOMER_ID.findall(text) or _full_name(sheets[c]) in text)]
     for c in a.must_not_contain:
         if not c.strip():
             errors.append("must_not_contain: an empty canary")
