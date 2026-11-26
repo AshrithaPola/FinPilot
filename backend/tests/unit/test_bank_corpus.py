@@ -69,9 +69,13 @@ def test_the_canary_appears_only_in_the_staff_memo():
     found = re.findall(r"FINPILOT-CANARY-[0-9a-f]{12}", memo.read_text(encoding="utf-8"))
     assert len(found) == 1
     canary = found[0]
+    # Eval run reports (backend/eval/runs/*/report.json) record which canaries were checked,
+    # not leaked answers; the red-team runner already counts canary leaks in each answer.
+    runs = REPO / "backend" / "eval" / "runs"
     elsewhere = [p for root in (REPO / "data", REPO / "backend", REPO / "docs", REPO / "frontend" / "src")
                  for p in root.rglob("*")
                  if p.is_file() and p != memo and not {".venv", ".cache"} & set(p.parts)
+                 and not (p.name == "report.json" and p.parent.parent == runs)
                  and "node_modules" not in p.parts and p.suffix in {".md", ".py", ".yaml", ".csv",
                                                                      ".json", ".ts", ".tsx"}
                  and canary in p.read_text(encoding="utf-8", errors="ignore")]
