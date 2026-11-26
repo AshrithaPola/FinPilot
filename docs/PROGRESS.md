@@ -308,7 +308,19 @@ PR #5 (Phases 0–2) was merged on 2026-11-14 with a merge commit
   are. `context_chunk_ids` lists the chunks a hit's text holds, which the
   experiment uses for recall.
 
-### Retrieval defaults: provisional design decision (2026-11-14)
+### Retrieval defaults: decided in Phase 10 (2026-11-25)
+
+**Default: hybrid, rerank off (`RETRIEVAL_MODE=hybrid`, `RERANK=false`).**
+Decided from the retrieval replay (`backend/eval/runs/20261125T223500Z-retrieval-replay`):
+every search query the frozen app's run 1 planned, through dense, hybrid and
+hybrid + rerank, so only the setting differs. On the eval set's 14 document
+questions: dense recall@5 0.964 / MRR 0.714, hybrid 0.929 / 0.714, hybrid +
+rerank 0.929 / 0.651. Rerank added no recall and lowered MRR; hybrid stays for
+the exact-term questions the branch experiment below favoured it on. The decision
+was made on this 14-question set (one question moves mean recall by 0.071), so
+it's a call on small evidence, not a general result.
+
+### Retrieval defaults: provisional design decision (2026-11-14), superseded above
 
 **Provisional default: hybrid + rerank (`RETRIEVAL_MODE=hybrid`,
 `RERANK=true`), parent expansion off**, as the architecture specifies. This

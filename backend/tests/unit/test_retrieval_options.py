@@ -77,8 +77,9 @@ def test_rerank_reorders_the_fused_candidates_then_cuts_to_top_k():
     assert hits[0].context_chunk_ids == ["d-3"]
 
 
-def test_the_defaults_are_hybrid_and_rerank_provisionally(monkeypatch):
+def test_the_defaults_are_hybrid_without_rerank(monkeypatch):
+    """Decided by the Phase 10 retrieval replay (eval/runs/20261125T223500Z-retrieval-replay)."""
     monkeypatch.delenv("RETRIEVAL_MODE")  # the suite overrides both (tests/conftest.py)
     monkeypatch.delenv("RERANK")
     s = Settings(_env_file=None)
-    assert (s.retrieval_mode, s.rerank, s.parent_expansion) == ("hybrid", True, False)
+    assert (s.retrieval_mode, s.rerank, s.parent_expansion) == ("hybrid", False, False)

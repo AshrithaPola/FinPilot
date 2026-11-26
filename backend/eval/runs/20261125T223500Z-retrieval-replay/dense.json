@@ -1,0 +1,388 @@
+{
+ "setup": {
+  "retrieval_mode": "dense",
+  "rerank": false,
+  "top_k": 6
+ },
+ "questions": {
+  "fee-why-0036": {
+   "queries": [
+    {
+     "query": "fee schedule $15 fee",
+     "doc_type": "fee_schedule"
+    }
+   ],
+   "run1_notes": [],
+   "recall_at_5": 1.0,
+   "mrr": 0.5,
+   "searches": 2,
+   "top5": [
+    [
+     "dispute-policy.md > Part C. Disputing a fee",
+     "fee-schedule-2026.md > 6. How fees are shown",
+     "deposit-agreement.md > 11. Fees",
+     "fee-schedule-2026.md > 1. Everyday Checking",
+     "overdraft-policy-2026.md > 3. Fees"
+    ],
+    [
+     "fee-schedule-2026.md > 6. How fees are shown",
+     "fee-schedule-2026.md > 1. Everyday Checking",
+     "fee-schedule-2026.md > 4. Payments and wires",
+     "fee-schedule-2026.md > FinPilot Bank Schedule of Fees: Personal Accounts",
+     "fee-schedule-2026.md > 2. ATM and debit card"
+    ]
+   ]
+  },
+  "atm-fee-rise-0019": {
+   "queries": [
+    {
+     "query": "out-of-network ATM fee schedule change",
+     "doc_type": "fee_schedule"
+    }
+   ],
+   "run1_notes": [],
+   "recall_at_5": 1.0,
+   "mrr": 0.5,
+   "searches": 2,
+   "top5": [
+    [
+     "deposit-agreement.md > 11. Fees",
+     "fee-schedule-2026.md > 2. ATM and debit card",
+     "fee-schedule-2026.md > What changed on February 1, 2026",
+     "overdraft-policy-2026.md > Summary of changes",
+     "dispute-policy.md > Part C. Disputing a fee"
+    ],
+    [
+     "fee-schedule-2026.md > 2. ATM and debit card",
+     "fee-schedule-2026.md > What changed on February 1, 2026",
+     "fee-schedule-2026.md > FinPilot Bank Schedule of Fees: Personal Accounts",
+     "fee-schedule-2026.md > 4. Payments and wires",
+     "fee-schedule-2026.md > 3. Savings"
+    ]
+   ]
+  },
+  "b1-overdraft-fee": {
+   "queries": [
+    {
+     "query": "overdraft fee Everyday Checking",
+     "doc_type": "fee_schedule"
+    }
+   ],
+   "run1_notes": [],
+   "recall_at_5": 1.0,
+   "mrr": 1.0,
+   "searches": 2,
+   "top5": [
+    [
+     "fee-schedule-2026.md > 1. Everyday Checking",
+     "account-comparison.md > Checking",
+     "overdraft-policy-2026.md > 3. Fees",
+     "overdraft-policy-2026.md > 2. Which transactions we may pay",
+     "deposit-agreement.md > 12. Overdrafts and returned items"
+    ],
+    [
+     "fee-schedule-2026.md > 1. Everyday Checking",
+     "fee-schedule-2026.md > What changed on February 1, 2026",
+     "fee-schedule-2026.md > 2. ATM and debit card",
+     "fee-schedule-2026.md > FinPilot Bank Schedule of Fees: Personal Accounts",
+     "fee-schedule-2026.md > 3. Savings"
+    ]
+   ]
+  },
+  "b1-cushion-paraphrase": {
+   "queries": [
+    {
+     "query": "overdraft fee charge timing balance dips below zero",
+     "doc_type": "policy"
+    }
+   ],
+   "run1_notes": [],
+   "recall_at_5": 1.0,
+   "mrr": 1.0,
+   "searches": 2,
+   "top5": [
+    [
+     "overdraft-policy-2026.md > 3. Fees",
+     "overdraft-policy-2026.md > 1. What an overdraft is",
+     "overdraft-policy-2026.md > 2. Which transactions we may pay",
+     "deposit-agreement.md > 12. Overdrafts and returned items",
+     "deposit-agreement.md > 7. Available balance and the order of posting"
+    ],
+    [
+     "overdraft-policy-2026.md > 3. Fees",
+     "overdraft-policy-2026.md > 1. What an overdraft is",
+     "overdraft-policy-2026.md > 2. Which transactions we may pay",
+     "overdraft-policy-2026.md > 4. Order of posting",
+     "overdraft-policy-2026.md > Summary of changes"
+    ]
+   ]
+  },
+  "b1-dispute-days": {
+   "queries": [
+    {
+     "query": "dispute a card charge timeframe days",
+     "doc_type": "agreement"
+    }
+   ],
+   "run1_notes": [],
+   "recall_at_5": 0.5,
+   "mrr": 0.5,
+   "searches": 2,
+   "top5": [
+    [
+     "dispute-policy.md > B3. What we do and how long it takes",
+     "dispute-policy.md > B2. How and when to tell us",
+     "dispute-policy.md > A4. What we do and how long it takes",
+     "cardmember-agreement.md > 8. Statements, disputes and unauthorized use",
+     "deposit-agreement.md > 14. Errors and disputes about your account"
+    ],
+    [
+     "cardmember-agreement.md > 8. Statements, disputes and unauthorized use",
+     "deposit-agreement.md > 14. Errors and disputes about your account",
+     "deposit-agreement.md > 13. Statements, notices and electronic communications",
+     "deposit-agreement.md > 8. Electronic fund transfers",
+     "deposit-agreement.md > 22. Liability, disputes and governing law"
+    ]
+   ]
+  },
+  "b1-vti-expense-ratio": {
+   "queries": [
+    {
+     "query": "VTI expense ratio prospectus",
+     "doc_type": "fund_prospectus"
+    }
+   ],
+   "run1_notes": [],
+   "recall_at_5": 1.0,
+   "mrr": 1.0,
+   "searches": 1,
+   "top5": [
+    [
+     "public/vti-summary-prospectus-2026.md > Fees and Expenses",
+     "public/vti-summary-prospectus-2026.md > Fees and Expenses",
+     "public/vti-summary-prospectus-2026.md > Fees and Expenses",
+     "public/vti-summary-prospectus-2026.md > Vanguard Total Stock Market ETF (VTI) summary prospectus, April 2026",
+     "public/vti-summary-prospectus-2026.md > Exchange-traded fund shares that are not individually redeemable and are listed on NYSE Arca"
+    ]
+   ]
+  },
+  "b1-apple-supply-chain": {
+   "queries": [
+    {
+     "query": "Apple supply chain risks 10-K",
+     "doc_type": "sec_10k"
+    }
+   ],
+   "run1_notes": [],
+   "recall_at_5": 1.0,
+   "mrr": 1.0,
+   "searches": 1,
+   "top5": [
+    [
+     "public/aapl-10k-2025.md > Business Risks",
+     "public/aapl-10k-2025.md > Macroeconomic and Industry Risks",
+     "public/aapl-10k-2025.md > Apple Inc. Form 10-K, fiscal year ended September 27, 2025",
+     "public/aapl-10k-2025.md > Business Risks",
+     "public/aapl-10k-2025.md > Business Risks"
+    ]
+   ]
+  },
+  "b1-memo-review": {
+   "queries": [
+    {
+     "query": "fraud memo transaction patterns review",
+     "doc_type": "internal_memo"
+    }
+   ],
+   "run1_notes": [
+    "weak evidence; searched again as 'CARD FRAUD RULES Q2 2026 real-time rules trigger criteria review flags'"
+   ],
+   "recall_at_5": 1.0,
+   "mrr": 0.25,
+   "searches": 1,
+   "top5": [
+    [
+     "internal/fraud-rules-memo.md > INTERNAL: Card Fraud Rules, Q2 2026",
+     "internal/fraud-rules-memo.md > 1. Purpose",
+     "internal/fraud-rules-memo.md > 5. Review",
+     "internal/fraud-rules-memo.md > 2. Real-time rules (debit and credit)",
+     "internal/fraud-rules-memo.md > 3. Analyst guidance"
+    ]
+   ]
+  },
+  "b2-overdraft-34-to-15": {
+   "queries": [
+    {
+     "query": "overdraft fee policy schedule",
+     "doc_type": "fee_schedule"
+    }
+   ],
+   "run1_notes": [],
+   "recall_at_5": 1.0,
+   "mrr": 0.5,
+   "searches": 2,
+   "top5": [
+    [
+     "overdraft-policy-2026.md > 3. Fees",
+     "fee-schedule-2026.md > 1. Everyday Checking",
+     "overdraft-policy-2026.md > Summary of changes",
+     "deposit-agreement.md > 12. Overdrafts and returned items",
+     "overdraft-policy-2026.md > 7. Fees assessed under the earlier policy"
+    ],
+    [
+     "fee-schedule-2026.md > 1. Everyday Checking",
+     "fee-schedule-2026.md > What changed on February 1, 2026",
+     "fee-schedule-2026.md > FinPilot Bank Schedule of Fees: Personal Accounts",
+     "fee-schedule-2026.md > 6. How fees are shown",
+     "fee-schedule-2026.md > 2. ATM and debit card"
+    ]
+   ]
+  },
+  "b1-daily-fee-cap": {
+   "queries": [
+    {
+     "query": "maximum overdraft fees per day limit",
+     "doc_type": "fee_schedule"
+    },
+    {
+     "query": "overdraft fee limit per day policy",
+     "doc_type": "policy"
+    }
+   ],
+   "run1_notes": [],
+   "recall_at_5": 1.0,
+   "mrr": 1.0,
+   "searches": 4,
+   "top5": [
+    [
+     "overdraft-policy-2026.md > 3. Fees",
+     "fee-schedule-2026.md > 1. Everyday Checking",
+     "overdraft-policy-2026.md > Summary of changes",
+     "overdraft-policy-2026.md > 5. Repaying an overdraft",
+     "deposit-agreement.md > 12. Overdrafts and returned items"
+    ],
+    [
+     "fee-schedule-2026.md > 1. Everyday Checking",
+     "fee-schedule-2026.md > What changed on February 1, 2026",
+     "fee-schedule-2026.md > 6. How fees are shown",
+     "fee-schedule-2026.md > FinPilot Bank Schedule of Fees: Personal Accounts",
+     "fee-schedule-2026.md > 2. ATM and debit card"
+    ],
+    [
+     "overdraft-policy-2026.md > 3. Fees",
+     "overdraft-policy-2026.md > Summary of changes",
+     "fee-schedule-2026.md > 1. Everyday Checking",
+     "deposit-agreement.md > 12. Overdrafts and returned items",
+     "overdraft-policy-2026.md > 5. Repaying an overdraft"
+    ],
+    [
+     "overdraft-policy-2026.md > 3. Fees",
+     "overdraft-policy-2026.md > Summary of changes",
+     "overdraft-policy-2026.md > 5. Repaying an overdraft",
+     "overdraft-policy-2026.md > 2. Which transactions we may pay",
+     "overdraft-policy-2026.md > 7. Fees assessed under the earlier policy"
+    ]
+   ]
+  },
+  "b3-debit-when-negative": {
+   "queries": [
+    {
+     "query": "debit card negative balance overdraft purchase policy",
+     "doc_type": "agreement"
+    }
+   ],
+   "run1_notes": [],
+   "recall_at_5": 1.0,
+   "mrr": 1.0,
+   "searches": 2,
+   "top5": [
+    [
+     "overdraft-policy-2026.md > 2. Which transactions we may pay",
+     "overdraft-policy-2026.md > 1. What an overdraft is",
+     "deposit-agreement.md > 12. Overdrafts and returned items",
+     "overdraft-policy-2026.md > 3. Fees",
+     "deposit-agreement.md > 7. Available balance and the order of posting"
+    ],
+    [
+     "deposit-agreement.md > 12. Overdrafts and returned items",
+     "deposit-agreement.md > 7. Available balance and the order of posting",
+     "deposit-agreement.md > 8. Electronic fund transfers",
+     "cardmember-agreement.md > 1. Using your card",
+     "cardmember-agreement.md > 9. Default and closing"
+    ]
+   ]
+  },
+  "b3-memo-all-rules": {
+   "queries": [
+    {
+     "query": "fraud memo rules",
+     "doc_type": "internal_memo"
+    }
+   ],
+   "run1_notes": [],
+   "recall_at_5": 1.0,
+   "mrr": 0.25,
+   "searches": 1,
+   "top5": [
+    [
+     "internal/fraud-rules-memo.md > INTERNAL: Card Fraud Rules, Q2 2026",
+     "internal/fraud-rules-memo.md > 1. Purpose",
+     "internal/fraud-rules-memo.md > 3. Analyst guidance",
+     "internal/fraud-rules-memo.md > 2. Real-time rules (debit and credit)",
+     "internal/fraud-rules-memo.md > 5. Review"
+    ]
+   ]
+  },
+  "b3-msft-risks": {
+   "queries": [
+    {
+     "query": "Microsoft risk factors 10-K",
+     "doc_type": "sec_10k"
+    }
+   ],
+   "run1_notes": [],
+   "recall_at_5": 1.0,
+   "mrr": 0.5,
+   "searches": 1,
+   "top5": [
+    [
+     "public/msft-10k-2025.md > Microsoft Corporation Form 10-K, fiscal year ended June 30, 2025",
+     "public/msft-10k-2025.md > ITEM 1A. RISK FACTORS",
+     "public/msft-10k-2025.md > Other digital safety abuses",
+     "public/msft-10k-2025.md > Other digital safety abuses",
+     "public/msft-10k-2025.md > Advertising, professional, marketplace, and gaming platform abuses"
+    ]
+   ]
+  },
+  "b3-foreign-fee-rate": {
+   "queries": [
+    {
+     "query": "Cash Back Card foreign transaction fee",
+     "doc_type": "fee_schedule"
+    }
+   ],
+   "run1_notes": [],
+   "recall_at_5": 1.0,
+   "mrr": 1.0,
+   "searches": 2,
+   "top5": [
+    [
+     "cardmember-agreement.md > 5. Fees",
+     "cardmember-agreement.md > 2. Pricing table",
+     "account-comparison.md > Cash Back Card",
+     "fee-schedule-2026.md > 5. Cash Back Card (credit card)",
+     "rates/card-rates.csv > effective 2025-07-01"
+    ],
+    [
+     "fee-schedule-2026.md > 5. Cash Back Card (credit card)",
+     "fee-schedule-2026.md > 2. ATM and debit card",
+     "fee-schedule-2026.md > 4. Payments and wires",
+     "fee-schedule-2026.md > 1. Everyday Checking",
+     "fee-schedule-2026.md > 3. Savings"
+    ]
+   ]
+  }
+ },
+ "embedding_calls": 25,
+ "llm_calls": 0
+}

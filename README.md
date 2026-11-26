@@ -40,7 +40,7 @@ flowchart TD
     ROUTE -->|"a question"| PLAN["plan: LLM call 1<br/>a typed plan, up to 6 steps"]
     PLAN --> EXEC["execute (code)<br/>each step as the caller"]
     EXEC --> FIN["financial-data tools<br/>accounts, market data"]
-    EXEC --> DOCS["documents: hybrid search<br/>vectors + full text + question index,<br/>RRF, local cross-encoder rerank"]
+    EXEC --> DOCS["documents: hybrid search<br/>vectors + full text + question index,<br/>RRF (cross-encoder rerank optional, off)"]
     EXEC --> CALC["calculator<br/>Decimal arithmetic"]
     FIN --> DB[("Neon: Postgres + pgvector<br/>row-level security as finpilot_app")]
     DOCS --> DB
@@ -78,7 +78,7 @@ A typical question takes three LLM calls; the rewrite, the re-plan and the regen
   - Receipts become fields through one Gemini vision call each, checked against the ground truth (10/10 per field).
   - One LLM call per section adds each chunk's summary, keywords and likely questions, cached by content. Version, effective date, department and type come from the manifest.
 - **Storage and retrieval on Neon** (Postgres + pgvector).
-  - Hybrid search fuses chunk vectors, full text and a hypothetical-question index with reciprocal rank fusion, in one round trip. A local cross-encoder then reranks the results.
+  - Hybrid search fuses chunk vectors, full text and a hypothetical-question index with reciprocal rank fusion, in one round trip. A local cross-encoder can rerank the results; it's off by default (the retrieval replay below).
   - Metadata filters run in SQL, and a search sees only the version of each document in force on its as-of date.
 - **Tools.**
   - Read-only accounts tools for the signed-in customer. They take no customer id argument, have strict arguments, use parameterized SQL, and run in a read-only transaction under row-level security.
@@ -103,8 +103,8 @@ Results are pending the ablation runs; the table goes here once there are real n
 | **Arithmetic in code, never in the model** (a Decimal calculator; amounts kept in cents). | Models get sums wrong in plausible ways. The calculator's result is evidence the answer must state and cite. |
 | **Code checks before the model's validator**: every figure must be in the evidence, every answer must cite, and advice phrasing is flagged. | They catch the most common errors without a model call, and they don't depend on a model judging its own output. |
 | **The three validators in one structured call** (gatekeeper, auditor, strategist). | One call instead of three, within a budget of 3–4 calls per question (a target set in the plan, not a measurement). A failure regenerates the answer once with the reason, then refuses. |
-| **Hybrid retrieval with a question index and a reranker** (defaults provisional until the ablations). | Exact terms need full text, and paraphrases need vectors. In the Neon branch experiment (19 questions), hybrid matched dense on MRR (0.93) and won the exact-term question ("Zero Liability", rank 3 to 1). The reranker dropped two table rows to rank 4, which is why the defaults wait for the ablations. |
-| **A local ONNX cross-encoder for reranking**, not torch or a hosted reranker. | About 80 MB, runs on CPU, and needs no extra API or key. |
+| **Hybrid retrieval with a question index; the reranker off by default.** | Exact terms need full text, and paraphrases need vectors. In the Neon branch experiment (19 questions), hybrid matched dense on MRR (0.93) and won the exact-term question ("Zero Liability", rank 3 to 1). The Phase 10 retrieval replay (run 1's queries through each setup, 14 document questions) found the reranker added no recall@5 (0.929 with and without) and lowered MRR (0.714 to 0.651), so it's off; a small set, so the call is provisional. |
+| **A local ONNX cross-encoder for reranking** (optional, `RERANK=true`), not torch or a hosted reranker. | About 80 MB, runs on CPU, and needs no extra API or key. |
 | **A chunk never crosses a section or holds two tables.** | Merging a small section into the next one mixed topics, so retrieval returned the wrong rule. |
 | **Version-aware search**: a document version applies from its effective date until it's superseded. | Fee schedules change mid-year: a question about March must see the schedule in force in March. |
 | **A fixed demo date** (2026-06-30, `DEMO_TODAY`). | The synthetic data ends there. A moving "today" would make every "this month" question return nothing. |
